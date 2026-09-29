@@ -120,20 +120,37 @@ a { color: var(--terra-deep); }
 .idea-body pre { background: #2A2118; color: #F3EAD9; padding: 14px; border-radius: 10px; overflow-x: auto; }
 .idea-body pre code { background: none; padding: 0; color: inherit; }
 .idea-body hr { border: none; border-top: 1px solid var(--line); margin: 1.4em 0; }
-.stepper { display: flex; align-items: center; gap: 0; margin: 16px 0 4px; }
-.step { flex: 1; text-align: center; position: relative; background: none; border: none; cursor: pointer; padding: 0; font-family: var(--sans); }
-.step .knob { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); background: var(--card); margin: 0 auto; display: flex; align-items: center; justify-content: center; font-size: 13px; color: transparent; }
-.step.done .knob { background: var(--terra); border-color: var(--terra); color: #fff; }
-.step.current .knob { border-color: var(--terra); box-shadow: 0 0 0 4px var(--terra-wash); }
-.step .lbl { font-size: 11px; color: var(--faint); margin-top: 5px; display: block; }
-.step.current .lbl { color: var(--terra-deep); font-weight: 600; }
-.step::before { content: ""; position: absolute; top: 13px; left: -50%; width: 100%; height: 2px; background: var(--line); z-index: -1; }
-.step:first-child::before { display: none; }
-.step.done::before { background: var(--terra); }
+/* ---- respond menu: one bubble for status + reactions ---- */
+.respond { padding: 14px; }
+.seg {
+  display: flex; background: var(--paper); border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px; gap: 2px;
+}
+.seg button {
+  flex: 1; border: none; background: transparent; border-radius: 999px;
+  padding: 8px 2px; font-size: 12.5px; font-weight: 600; color: var(--soft);
+  cursor: pointer; white-space: nowrap; font-family: var(--sans);
+}
+.seg button.on {
+  background: var(--card); color: var(--terra-deep);
+  box-shadow: 0 1px 3px rgba(60, 40, 20, 0.14);
+}
+.respond-sub {
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; margin-top: 10px;
+}
+.respond-sub button {
+  background: none; border: none; color: var(--terra-deep); font-weight: 600;
+  cursor: pointer; padding: 4px 2px; font-size: 13.5px; font-family: var(--sans);
+}
+.respond-sub .dot-sep { color: var(--faint); }
+.respond-div { border-top: 1px solid var(--line); margin: 12px 0; }
+.respond .reacts { margin: 0; }
 .reacts { display: flex; gap: 8px; margin: 14px 0; }
 .react {
   border: 1px solid var(--line); background: var(--card); border-radius: 999px;
-  padding: 7px 14px; font-size: 14px; cursor: pointer; color: var(--soft);
+  padding: 7px 12px; font-size: 13.5px; cursor: pointer; color: var(--soft);
+  white-space: nowrap; font-family: var(--sans);
 }
 .react.on { border-color: var(--terra); background: var(--terra-wash); color: var(--terra-deep); }
 .comment { border-top: 1px solid var(--line); padding: 12px 0; }

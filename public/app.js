@@ -241,38 +241,34 @@ async function viewCircle() {
   heartbeat("circle");
 }
 
-/* Single-level template helpers for the idea view (no nested backticks). */
-function stepHtml(s, i, flowIdx) {
-  const cls = i < flowIdx ? " done" : (i === flowIdx ? " current" : "");
-  const mark = i < flowIdx ? "✓" : "";
-  return '<button class="step' + cls + '" data-status="' + s + '">' +
-    '<span class="knob">' + mark + '</span><span class="lbl">' + STATUS_LABEL[s] + "</span></button>";
-}
-function statusBlockHtml(note) {
-  if (!note.mine) {
-    return '<p class="eyebrow">Where it stands</p><div class="card">' +
-      '<span class="pill ' + note.status + '">' + (STATUS_LABEL[note.status] || note.status) + "</span>" +
-      '<p class="sub" style="margin:8px 0 0">' + esc(note.author.name.split(" ")[0]) + " is tending this one.</p></div>";
+/* Single response menu: status + reactions in one bubble. */
+function respondMenuHtml(note) {
+  let statusPart;
+  if (note.mine) {
+    const seg = STATUS_FLOW.map(function (s) {
+      const on = note.status === s ? " on" : "";
+      return '<button data-status="' + s + '" class="' + on.trim() + '">' + STATUS_LABEL[s] + "</button>";
+    }).join("");
+    const restBtn = note.status !== "resting"
+      ? '<button data-status="resting">Let it rest</button>'
+      : '<button data-status="seed">Wake it up</button>';
+    const shareBtn = !note.shared
+      ? '<button id="share">Bring to circle</button>'
+      : '<button id="unshare">Take back to notepad</button>';
+    statusPart = '<div class="seg">' + seg + "</div>" +
+      '<div class="respond-sub">' + restBtn + '<span class="dot-sep">·</span>' + shareBtn + "</div>";
+  } else {
+    statusPart = '<div class="respond-sub" style="margin-top:0"><span class="pill ' + note.status + '">' +
+      (STATUS_LABEL[note.status] || note.status) + "</span></div>";
   }
-  const flowIdx = STATUS_FLOW.indexOf(note.status);
-  const steps = STATUS_FLOW.map(function (s, i) { return stepHtml(s, i, flowIdx); }).join("");
-  const restBtn = note.status !== "resting"
-    ? '<button class="btn btn-quiet" data-status="resting">Let it rest</button>'
-    : '<button class="btn btn-quiet" data-status="seed">Wake it up</button>';
-  const shareBtn = !note.shared
-    ? '<button class="btn btn-ghost" id="share">Bring to circle</button>'
-    : '<button class="btn btn-quiet" id="unshare">Take back to notepad</button>';
-  return '<p class="eyebrow">Where it stands</p><div class="card"><div class="stepper">' + steps +
-    '</div><div class="btn-row">' + restBtn + shareBtn + "</div></div>";
-}
-function reactsHtml(note) {
-  const btns = Object.keys(REACT_META).map(function (k) {
+  const reacts = Object.keys(REACT_META).map(function (k) {
     const g = REACT_META[k][0], label = REACT_META[k][1];
     const on = note.myReactions.indexOf(k) >= 0 ? " on" : "";
     const n = note.reactionCounts[k] || 0;
     return '<button class="react' + on + '" data-react="' + k + '">' + g + " " + label + " · " + n + "</button>";
   }).join("");
-  return '<p class="eyebrow">How it lands</p><div class="reacts">' + btns + "</div>";
+  return '<div class="card respond">' + statusPart +
+    '<div class="respond-div"></div><div class="reacts">' + reacts + "</div></div>";
 }
 function relatedHtml(related) {
   if (!related.length) return "";
@@ -324,7 +320,7 @@ function ideaReadHtml(note, related) {
     "<span>·</span><span>" + relTime(note.updatedAt) + "</span><span>·</span><span>◷ " + note.readMins + " min read</span></div>" +
     '<h1 class="idea-title">' + esc(note.title) + "</h1>" + tags +
     '<div class="card" style="margin-top:14px"><div class="idea-body">' + md(note.body) + "</div></div>" +
-    statusBlockHtml(note) + reactsHtml(note) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
+    respondMenuHtml(note) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
 }
 
 async function viewIdea(id, editing) {
