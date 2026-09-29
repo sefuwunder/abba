@@ -295,10 +295,10 @@ async function viewCompose(kind) {
 }
 
 /* ---------- note detail ---------- */
-/* Radial response menu (after callmenick's CSS-Circle-Menu): the center button
-   shows the current status; tapping fans out statuses, actions and reactions
-   with staggered spring timing. */
-function circleMenuHtml(note) {
+/* Floating response orb (after callmenick's CSS-Circle-Menu): a 15pt dot fixed
+   above the tab bar. Tapping fans statuses, actions and reactions out over
+   the interface with staggered spring timing. */
+function orbHtml(note) {
   const items = [];
   if (note.mine) {
     STATUS_FLOW.forEach(s => items.push({ kind: "status", key: s, label: STATUS_LABEL[s], active: note.status === s }));
@@ -311,19 +311,21 @@ function circleMenuHtml(note) {
       count: note.reactionCounts[k] || 0, active: note.myReactions.indexOf(k) >= 0,
     });
   });
-  const n = items.length, step = 360 / n;
+  const n = items.length, step = n > 1 ? 180 / (n - 1) : 0;
   const sats = items.map((it, i) => {
-    const a = -90 + i * step;
+    const a = 180 + i * step;
     const inner = it.kind === "react"
       ? '<span class="c-emoji">' + it.emoji + "</span>" + (it.count ? '<span class="c-badge">' + it.count + "</span>" : "")
       : '<span class="c-label">' + esc(it.label) + "</span>";
     return '<button class="c-item' + (it.active ? " on" : "") + '" data-ck="' + it.kind + '" data-ckey="' + it.key + '"' +
       ' style="--a:' + a.toFixed(1) + 'deg;--i:' + i + '" aria-label="' + esc(it.label || it.key) + '">' + inner + "</button>";
   }).join("");
-  const centerLabel = STATUS_LABEL[note.status] || note.status;
-  return '<div class="card circle-card"><div class="circle-stage" id="cstage">' +
-    '<button class="c-center" id="ctoggle" aria-label="Respond">' + esc(centerLabel) + "</button>" +
-    sats + '</div><p class="circle-hint">Tap to respond</p></div>';
+  const hint = localStorage.getItem("abba_orb_seen")
+    ? ""
+    : '<div class="orb-hint" id="orbhint">Respond</div>';
+  return '<div class="orb-wrap" id="cstage">' + sats +
+    '<button class="orb" id="ctoggle" aria-label="Respond"><span class="orb-dot"></span></button>' +
+    hint + "</div>";
 }
 function relatedHtml(related) {
   if (!related.length) return "";
@@ -376,7 +378,7 @@ function detailBodyHtml(note, related) {
     '<p class="note-meta"><span class="dot" style="background:' + esc(note.author.color) + '"></span>' +
     esc(note.author.name) + " · " + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min</p>" +
     tags + '<div class="reader">' + md(note.body) + "</div>" +
-    circleMenuHtml(note) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
+    orbHtml(note) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
 }
 
 async function viewDetail(id, editing) {
@@ -422,11 +424,12 @@ async function viewDetail(id, editing) {
   }
   const stage = $("#cstage"), ctoggle = $("#ctoggle");
   if (stage && ctoggle) {
-    const centerText = ctoggle.textContent;
     ctoggle.onclick = () => {
       const open = stage.classList.toggle("open");
-      ctoggle.textContent = open ? "✕" : centerText;
       ctoggle.setAttribute("aria-label", open ? "Close" : "Respond");
+      const hint = $("#orbhint");
+      if (hint) hint.remove();
+      try { localStorage.setItem("abba_orb_seen", "1"); } catch (e) { /* private mode */ }
     };
     app.querySelectorAll(".c-item").forEach(b => b.onclick = async () => {
       const kind = b.dataset.ck, key = b.dataset.ckey;
