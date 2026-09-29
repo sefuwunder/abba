@@ -45,8 +45,36 @@ scripts/        screenshot helpers (dev only)
 ## Tests
 
 ```bash
-bun test   # 36 tests: full circle lifecycle over real HTTP
+bun test   # 45 tests: circle lifecycle + mind unit + two-instance mesh sync
 ```
+
+## Mesh sync (peer-to-peer)
+
+Abba embeds a [mesh](https://github.com/sefuwunder/mesh) node (`src/mesh/` —
+ed25519 identity, signed KV, gossip). Peer two Abba instances and their shared
+circle notes replicate over each instance's Cloudflare tunnel:
+
+- **Circle → Mesh sync** (owner only): create an instance invite on one Abba,
+  paste it into the other's Join. Peering is mutual — both sides sync both ways.
+- Only **shared** notes leave the instance; the private notepad never syncs.
+  Unshare and delete publish retractions so peers drop the note.
+- Notes sync as single-writer snapshots (last-writer-wins); reactions use one
+  key per reactor node and comments are immutable payloads, so neither is ever
+  lost to a concurrent edit.
+- Sync runs every 30s; **Sync now** forces a round. All payloads are
+  signature-checked before they touch the database.
+
+Each instance needs its public tunnel address:
+
+```bash
+ABBA_PUBLIC_URL=https://abba-you.trycloudflare.com ABBA_PORT=3013 bun src/server.ts
+# and in another terminal:
+cloudflared tunnel --url http://localhost:3013
+```
+
+New env: `ABBA_PUBLIC_URL` (falls back to `PUBLIC_URL`), `ABBA_PORT`, `ABBA_DATA`.
+The mesh identity lives at `$ABBA_DATA/identity.json`, sync state in
+`$ABBA_DATA/mesh.db`.
 
 ## Notes
 

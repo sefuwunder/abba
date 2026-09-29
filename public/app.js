@@ -521,16 +521,18 @@ async function viewMembers() {
   ]);
   const hereIds = new Set(here.map(h => h.id));
   const isOwner = state.me.role === "owner";
+  const localCount = members.filter(m => m.role !== "remote").length;
   app.innerHTML = `
     <h1 class="large-title">Circle</h1>
     ${presenceLine()}
-    <p class="section-label">Members · ${members.length} of ${state.circle.memberCap}</p>
+    <p class="section-label">Members · ${localCount} of ${state.circle.memberCap}</p>
     <div class="group">
       ${members.map(m => {
         const isHere = hereIds.has(m.id) || m.id === state.me.id;
+        const sub = isHere ? "here now" : m.role === "owner" ? "started the circle" : m.role === "remote" ? "synced from another Abba" : "member";
         return `<div class="mrow"><span class="dot" style="background:${esc(m.color)};width:16px;height:16px"></span>
-          <div class="mrow-main"><div class="mrow-name">${esc(m.name)}${m.id === state.me.id ? " (you)" : ""}</div>
-          <div class="mrow-sub${isHere ? " here" : ""}">${isHere ? "here now" : m.role === "owner" ? "started the circle" : "member"}</div></div></div>`;
+          <div class="mrow-main"><div class="mrow-name">${esc(m.name)}${m.id === state.me.id ? " (you) " : ""}</div>
+          <div class="mrow-sub${isHere ? " here" : ""}">${sub}</div></div></div>`;
       }).join("")}
     </div>
     <p class="section-label">Invite</p>
@@ -541,7 +543,9 @@ async function viewMembers() {
         <button class="btn btn-ghost" id="copy">Copy invite link</button>
         ${isOwner ? `<button class="btn btn-quiet" id="regen" style="color:#C9BBA6">New code</button>` : ""}
       </div>
-    </div>`;
+    </div>
+    <p class="section-label">Mesh sync</p>
+    <div class="card" id="mesh-card"><p class="sub" id="mesh-loading">Checking the mesh…</p></div>`;
   $("#copy").onclick = async () => {
     const link = location.origin + location.pathname + "#/welcome?code=" + state.circle.inviteCode;
     try { await navigator.clipboard.writeText(link); toast("Invite link copied."); }
@@ -552,7 +556,72 @@ async function viewMembers() {
     try { const d = await api("/api/invite/regenerate", { method: "POST" }); state.circle.inviteCode = d.inviteCode; viewMembers(); toast("New code issued."); }
     catch (e) { toast(e.message); }
   };
+  renderMeshCard(isOwner);
   heartbeat("members");
+}
+
+async function renderMeshCard(isOwner) {
+  const card = $("#mesh-card");
+  if (!card) return;
+  let st;
+  try { st = await api("/api/mesh/status"); }
+  catch (e) { card.innerHTML = `<p class="sub">Mesh isn't reachable: ${esc(e.message)}</p>`; return; }
+  const shortId = st.nodeId.slice(0, 8) + "…" + st.nodeId.slice(-4);
+  card.innerHTML = `
+    <div class="mesh-head"><span class="mono">${esc(shortId)}</span>
+      <span class="sub" style="margin:0">${esc(st.url)}</span></div>
+    ${st.peers.length ? `<div class="mesh-peers">${st.peers.map(p => `
+      <div class="mrow"><span class="dot" style="background:${p.lastOk ? "var(--sage)" : "var(--faint)"};width:12px;height:12px"></span>
+        <div class="mrow-main"><div class="mrow-name mono">${esc(p.id.slice(0, 8))}…</div>
+        <div class="mrow-sub">${esc(p.url)}${p.via ? " · via mesh" : ""}</div></div>
+        ${isOwner ? `<button class="btn btn-quiet mesh-rm" data-id="${esc(p.id)}" style="color:#C9BBA6">Remove</button>` : ""}
+      </div>`).join("")}</div>`
+      : `<p class="sub">No peered instances. Shared notes stay on this Abba until you peer one.</p>`}
+    ${isOwner ? `
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-ghost" id="mesh-invite">Create instance invite</button>
+      <button class="btn btn-ghost" id="mesh-sync">Sync now</button>
+    </div>
+    <div id="mesh-code-wrap" style="display:none;margin-top:10px">
+      <input class="mono" id="mesh-code" readonly style="width:100%;font-size:11px">
+      <div class="btn-row" style="margin-top:8px"><button class="btn btn-ghost" id="mesh-copy">Copy code</button></div>
+      <p class="sub" style="margin-top:8px">Paste this on the <em>other</em> Abba's Circle → Mesh sync → Join. Only shared notes replicate; private notepad notes never leave this instance.</p>
+    </div>
+    <div class="btn-row" style="margin-top:10px">
+      <input id="mesh-join-code" class="mono" placeholder="paste instance invite…" style="flex:1;min-width:0;font-size:11px">
+      <button class="btn btn-primary" id="mesh-join">Join</button>
+    </div>` : `<p class="sub">Only the circle's owner can peer instances.</p>`}`;
+  const inv = $("#mesh-invite");
+  if (inv) inv.onclick = async () => {
+    try {
+      const d = await api("/api/mesh/invite", { method: "POST" });
+      $("#mesh-code-wrap").style.display = "block";
+      $("#mesh-code").value = d.code;
+    } catch (e) { toast(e.message); }
+  };
+  const cp = $("#mesh-copy");
+  if (cp) cp.onclick = async () => {
+    const el = $("#mesh-code");
+    try { await navigator.clipboard.writeText(el.value); toast("Copied."); }
+    catch { el.select(); toast("Copy it manually."); }
+  };
+  const jn = $("#mesh-join");
+  if (jn) jn.onclick = async () => {
+    const code = $("#mesh-join-code").value.trim();
+    if (!code) return;
+    try { await api("/api/mesh/join", { method: "POST", body: JSON.stringify({ code }) }); toast("Instance peered. Syncing…"); renderMeshCard(isOwner); }
+    catch (e) { toast(e.message); }
+  };
+  const sy = $("#mesh-sync");
+  if (sy) sy.onclick = async () => {
+    try { await api("/api/mesh/sync", { method: "POST" }); toast("Synced."); renderMeshCard(isOwner); }
+    catch (e) { toast(e.message); }
+  };
+  card.querySelectorAll(".mesh-rm").forEach(b => b.onclick = async () => {
+    if (!confirm("Stop syncing with this instance?")) return;
+    try { await api("/api/mesh/peers/" + b.dataset.id, { method: "DELETE" }); renderMeshCard(isOwner); }
+    catch (e) { toast(e.message); }
+  });
 }
 
 /* ---------- welcome ---------- */

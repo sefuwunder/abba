@@ -52,6 +52,8 @@ const CANNED: Record<string, any> = {
   "/api/circle": { name: "The Corner Table", inviteCode: "abba-7k2qx9", memberCap: 12 },
   "/api/members": { members: [ME, ARI, JUNE] },
   "/api/presence": { here: [ARI, JUNE] },
+  "/api/mesh/status": { nodeId: "8eac6e2f4f1ad24432e4a41ecad6d7c4", url: "https://abba-june.trycloudflare.com", isOwner: true,
+    peers: [{ id: "d6506f165aa03c31772796431eeb920b", url: "https://abba-sam.trycloudflare.com", name: "", lastSeen: Date.now() - 40000, lastOk: Date.now() - 40000, via: null }] },
   "/api/nudges": { nudges: [{ key: "stale-3", text: "\u201cKill the newsletter?\u201d has been sprouting for a while \u2014 still alive, or time to let it rest?", noteId: 3, action: "rest" }] },
   "/api/digests": { digests: [
     { weekKey: "2026-W40", createdAt: "2026-09-29T10:00:00.000Z", title: "This week in the circle" },

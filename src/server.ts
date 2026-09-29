@@ -3,6 +3,10 @@
 import { Database } from "bun:sqlite";
 import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, __setDbForTests } from "./db";
 import { autoTitle, readMins, relatedIdeas, composeDigest, getDigest, listDigests, nudgesFor, dismissNudge, type NoteRow } from "./mind";
+import {
+  getMesh, publicUrl, meshTick, meshProtocol, ensureNoteGids,
+  publishNote, publishNoteTombstone, publishReaction, publishComment,
+} from "./meshbridge";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
@@ -116,6 +120,20 @@ async function handle(req: Request): Promise<Response> {
     return json({ hasCircle: !!circle });
   }
 
+  // mesh sync protocol (peer-facing; payloads are signed — no bearer needed)
+  if (path.startsWith("/api/sync/")) {
+    return meshProtocol(getMesh(), req, url) || err("Not found.", 404);
+  }
+  // mutual-peering handshake: accept a peer's invite code (bearer credential)
+  if (req.method === "POST" && path === "/api/mesh/accept") {
+    const b = await body(req);
+    if (!b.code) return err("Invite code required.", 400);
+    try {
+      const p = getMesh().joinViaInvite(String(b.code));
+      return json({ ok: true, peer: p.id });
+    } catch (e: any) { return err(e.message || "Bad invite code.", 400); }
+  }
+
   const me = memberFrom(req);
   if (!me) return err("Not signed in.", 401);
   touchPresence(me, url.searchParams.get("view") || "");
@@ -139,6 +157,48 @@ async function handle(req: Request): Promise<Response> {
     const cutoff = new Date(Date.now() - 120_000).toISOString();
     const here = db.query("SELECT id, name, color FROM members WHERE last_seen >= ? AND id != ?").all(cutoff, me.id) as any[];
     return json({ here });
+  }
+
+  // mesh: peer this Abba instance with another instance's circle.
+  // Only shared notes ever leave the instance; the private notepad never syncs.
+  if (path.startsWith("/api/mesh")) {
+    const mesh = getMesh();
+    if (req.method === "GET" && path === "/api/mesh/status") {
+      return json({
+        nodeId: mesh.identity.id, url: publicUrl(), isOwner: me.role === "owner",
+        peers: mesh.listPeers().map((p) => ({ id: p.id, url: p.url, name: p.name, lastSeen: p.last_seen, lastOk: p.last_ok, via: p.via })),
+      });
+    }
+    if (me.role !== "owner") return err("Only the circle's owner can peer instances.", 403);
+    if (req.method === "POST" && path === "/api/mesh/invite") {
+      return json({ code: mesh.createInvite(), url: publicUrl(), nodeId: mesh.identity.id });
+    }
+    if (req.method === "POST" && path === "/api/mesh/join") {
+      const b = await body(req);
+      if (!b.code) return err("Invite code required.", 400);
+      try {
+        const p = mesh.joinViaInvite(String(b.code));
+        // mutual peering: hand our own invite back so they sync from us too
+        try {
+          const back = await fetch(p.url.replace(/\/+$/, "") + "/api/mesh/accept", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: mesh.createInvite() }),
+            signal: AbortSignal.timeout(10000),
+          });
+          if (!back.ok) console.error("[mesh] peer did not accept our invite");
+        } catch (e: any) { console.error("[mesh] accept-back failed:", e.message); }
+        await meshTick(); // pull immediately so the circle appears right away
+        return json({ peer: { id: p.id, url: p.url, name: p.name } });
+      } catch (e: any) { return err(e.message || "Bad invite code.", 400); }
+    }
+    const delMp = path.match(/^\/api\/mesh\/peers\/([0-9a-f]{32})$/);
+    if (delMp && req.method === "DELETE") return json({ removed: mesh.removePeer(delMp[1]) });
+    if (req.method === "POST" && path === "/api/mesh/sync") {
+      await meshTick();
+      return json({ ok: true });
+    }
+    return err("Not found.", 404);
   }
 
   // notes
@@ -165,6 +225,7 @@ async function handle(req: Request): Promise<Response> {
     const res = db.query(`INSERT INTO notes (member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
       VALUES (?, ?, ?, ?, 'seed', ?, ?, ?, ?)`).run(me.id, title, noteBody, JSON.stringify(tags), shared, readMins(noteBody), t, t);
     if (shared) logEvent("shared", me.id, Number(res.lastInsertRowid), {});
+    publishNote(getMesh(), db, Number(res.lastInsertRowid));
     const note = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
       JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(Number(res.lastInsertRowid)) as NoteRow;
     return json({ note: noteJson(note, me) }, 201);
@@ -211,12 +272,14 @@ async function handle(req: Request): Promise<Response> {
       if (!updates.length) return err("Nothing to change.", 400);
       updates.push("updated_at = ?"); vals.push(nowIso()); vals.push(noteId);
       db.query(`UPDATE notes SET ${updates.join(", ")} WHERE id = ?`).run(...vals);
+      publishNote(getMesh(), db, noteId);
       const fresh = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
         JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as NoteRow;
       return json({ note: noteJson(fresh, me) });
     }
 
     if (req.method === "DELETE" && sub === "") {
+      publishNoteTombstone(getMesh(), db, noteId);
       db.query("DELETE FROM notes WHERE id = ?").run(noteId);
       return json({ ok: true });
     }
@@ -225,12 +288,14 @@ async function handle(req: Request): Promise<Response> {
       if (note.shared === 1) return json({ note: noteJson(note, me) });
       db.query("UPDATE notes SET shared = 1, updated_at = ? WHERE id = ?").run(nowIso(), noteId);
       logEvent("shared", me.id, noteId, {});
+      publishNote(getMesh(), db, noteId);
       const fresh = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
         JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as NoteRow;
       return json({ note: noteJson(fresh, me) });
     }
     if (req.method === "POST" && sub === "/unshare") {
       db.query("UPDATE notes SET shared = 0, updated_at = ? WHERE id = ?").run(nowIso(), noteId);
+      publishNote(getMesh(), db, noteId); // retraction: remotes drop it
       const fresh = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
         JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as NoteRow;
       return json({ note: noteJson(fresh, me) });
@@ -240,9 +305,10 @@ async function handle(req: Request): Promise<Response> {
       const b = await body(req);
       const cbody = String(b.body || "").trim().slice(0, 5000);
       if (!cbody) return err("Write something first.", 400);
-      db.query("INSERT INTO comments (note_id, member_id, body, created_at) VALUES (?, ?, ?, ?)")
+      const cres = db.query("INSERT INTO comments (note_id, member_id, body, created_at) VALUES (?, ?, ?, ?)")
         .run(noteId, me.id, cbody, nowIso());
       logEvent("comment", me.id, noteId, {});
+      publishComment(getMesh(), db, Number(cres.lastInsertRowid));
       const fresh = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
         JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as NoteRow;
       return json({ note: noteJson(fresh, me) }, 201);
@@ -255,6 +321,7 @@ async function handle(req: Request): Promise<Response> {
       const existing = db.query("SELECT 1 FROM reactions WHERE note_id = ? AND member_id = ? AND kind = ?").get(noteId, me.id, kind);
       if (existing) db.query("DELETE FROM reactions WHERE note_id = ? AND member_id = ? AND kind = ?").run(noteId, me.id, kind);
       else db.query("INSERT INTO reactions (note_id, member_id, kind, created_at) VALUES (?, ?, ?, ?)").run(noteId, me.id, kind, nowIso());
+      publishReaction(getMesh(), db, noteId, me, kind, !existing);
       const fresh = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
         JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as NoteRow;
       return json({ note: noteJson(fresh, me) });
@@ -285,6 +352,9 @@ function publicMember(m: any): any {
 export function __resetForTests(d: Database): void { __setDbForTests(d); }
 
 if (import.meta.main) {
+  ensureNoteGids(getDb(), getMesh());
   Bun.serve({ port: PORT, fetch: handle });
-  console.log(`Abba listening on http://localhost:${PORT}`);
+  console.log(`Abba listening on http://localhost:${PORT}  (mesh node ${getMesh().identity.id})`);
+  setTimeout(meshTick, 10000);
+  setInterval(meshTick, 30000);
 }

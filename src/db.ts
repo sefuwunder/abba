@@ -96,7 +96,18 @@ function migrate(d: Database): void {
       created_at TEXT NOT NULL,
       PRIMARY KEY (member_id, nudge_key)
     );
+    CREATE TABLE IF NOT EXISTS mesh_seen (
+      k TEXT PRIMARY KEY,
+      ts INTEGER NOT NULL
+    );
   `);
+  // mesh columns (added after the fact — idempotent)
+  for (const [table, column] of [["notes", "gid"], ["comments", "remote_gid"]]) {
+    const cols = d.query(`PRAGMA table_info(${table})`).all() as any[];
+    if (!cols.some((c) => c.name === column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+  }
+  d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_gid ON notes(gid)");
+  d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_rgid ON comments(remote_gid)");
 }
 
 export function nowIso(): string {
