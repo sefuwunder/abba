@@ -521,7 +521,7 @@ async function viewMembers() {
   ]);
   const hereIds = new Set(here.map(h => h.id));
   const isOwner = state.me.role === "owner";
-  const localCount = members.filter(m => m.role !== "remote").length;
+  const localCount = members.filter(m => m.role !== "remote" && m.role !== "migrated").length;
   app.innerHTML = `
     <h1 class="large-title">Circle</h1>
     ${presenceLine()}
@@ -529,7 +529,9 @@ async function viewMembers() {
     <div class="group">
       ${members.map(m => {
         const isHere = hereIds.has(m.id) || m.id === state.me.id;
-        const sub = isHere ? "here now" : m.role === "owner" ? "started the circle" : m.role === "remote" ? "synced from another Abba" : "member";
+        const sub = isHere ? "here now" : m.role === "owner" ? "started the circle"
+          : m.role === "remote" ? "synced from another Abba"
+          : m.role === "migrated" ? "from the old circle" : "member";
         return `<div class="mrow"><span class="dot" style="background:${esc(m.color)};width:16px;height:16px"></span>
           <div class="mrow-main"><div class="mrow-name">${esc(m.name)}${m.id === state.me.id ? " (you) " : ""}</div>
           <div class="mrow-sub${isHere ? " here" : ""}">${sub}</div></div></div>`;
@@ -555,7 +557,16 @@ async function viewMembers() {
         <input id="acc-pass" type="password" placeholder="new secret (4+ characters)" style="flex:1;min-width:0" autocomplete="new-password">
         <button class="btn btn-primary" id="acc-set">Set secret</button>
       </div>
-    </div>`;
+    </div>
+    ${isOwner ? `
+    <p class="section-label" style="color:#B0442F">Danger zone</p>
+    <div class="card">
+      <p class="sub" style="margin:0 0 10px">Migrate moves this circle's content — your notes and shared notes — into a fresh, empty circle with a new invite code. Everyone but you starts over.</p>
+      <div class="btn-row"><button class="btn btn-ghost" id="circ-migrate">Migrate to new circle</button></div>
+      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
+      <p class="sub" style="margin:0 0 10px">Burning destroys the circle on this Abba — members, notes, everything. Peered instances are told to drop shared notes. This can't be undone.</p>
+      <div class="btn-row"><button class="btn btn-ghost" id="circ-burn" style="color:#B0442F;border-color:#E3B7A9">Burn circle</button></div>
+    </div>` : ""}`;
   $("#copy").onclick = async () => {
     const link = location.origin + location.pathname + "#/welcome?code=" + state.circle.inviteCode;
     try { await navigator.clipboard.writeText(link); toast("Invite link copied."); }
@@ -575,6 +586,27 @@ async function viewMembers() {
       toast("Secret set.");
       state.me.hasPassword = true;
       viewMembers();
+    } catch (e) { toast(e.message); }
+  };
+  const mig = $("#circ-migrate");
+  if (mig) mig.onclick = async () => {
+    if (!confirm("Migrate this circle's content into a fresh, empty circle? Everyone but you will need to re-join with the new invite code.")) return;
+    try {
+      const d = await api("/api/circle/migrate", { method: "POST" });
+      state.circle.inviteCode = d.inviteCode;
+      toast(`New circle ready — ${d.migratedNotes} notes migrated.`);
+      viewMembers();
+    } catch (e) { toast(e.message); }
+  };
+  const brn = $("#circ-burn");
+  if (brn) brn.onclick = async () => {
+    const c = prompt("Type BURN to destroy this circle and everything in it. This can't be undone.");
+    if (c === null) return;
+    try {
+      await api("/api/circle/burn", { method: "POST", body: JSON.stringify({ confirm: c }) });
+      localStorage.removeItem("abba_token");
+      location.hash = "#/welcome";
+      await boot(true);
     } catch (e) { toast(e.message); }
   };
   heartbeat("members");

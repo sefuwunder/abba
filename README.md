@@ -76,6 +76,20 @@ New env: `ABBA_PUBLIC_URL` (falls back to `PUBLIC_URL`), `ABBA_PORT`, `ABBA_DATA
 The mesh identity lives at `$ABBA_DATA/identity.json`, sync state in
 `$ABBA_DATA/mesh.db`.
 
+## Circle admin (owner only)
+
+**Migrate** moves the circle's content — your notes plus shared notes — into a
+fresh, empty circle with a new invite code. Everyone but you starts over;
+migrated authors show as "from the old circle". Remote (mesh-synced) notes are
+left to re-sync from their origin peers. Peered instances converge on the new
+copies via tombstones + fresh snapshots.
+
+**Burn** destroys the circle on this Abba — members, notes, everything — and
+returns to the welcome screen. Shared notes are tombstoned first so connected
+peers drop them; the tombstones persist in the local mesh KV so even a later
+re-peer converges on "deleted" instead of resurrecting notes. Type `BURN` to
+confirm. There is no undo.
+
 ## Account secrets (re-open with a password)
 
 Bearer tokens live in the browser — lose the browser data and the account is

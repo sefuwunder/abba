@@ -203,6 +203,9 @@ export async function meshTick(): Promise<void> {
   const m = getMesh();
   const db = getDb();
   try { await gossipRound(m); } catch (e) { console.error("[mesh] gossip:", (e as any)?.message); }
+  // a burned (or not-yet-created) circle serves sync but applies nothing
+  const circle = db.query("SELECT id FROM circle WHERE id = 1").get();
+  if (!circle) return;
   try {
     const n = applyMeshUpdates(m, db);
     if (n) console.log(`[mesh] applied ${n} update(s)`);

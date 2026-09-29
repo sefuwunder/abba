@@ -8,6 +8,7 @@ import {
   publishNote, publishNoteTombstone, publishReaction, publishComment,
   publishMemberCredential, findMeshCredential,
 } from "./meshbridge";
+import { migrateCircle, burnCircle } from "./circleadmin";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
@@ -114,7 +115,7 @@ async function handle(req: Request): Promise<Response> {
     const circle = db.query("SELECT * FROM circle WHERE id = 1").get() as any;
     if (!circle) return err("No circle yet — someone needs to start one first.", 404);
     if (String(b.code || "").trim().toLowerCase() !== circle.invite_code) return err("That invite code doesn't match.", 403);
-    const count = (db.query("SELECT COUNT(*) AS c FROM members").get() as any).c;
+    const count = (db.query("SELECT COUNT(*) AS c FROM members WHERE role NOT IN ('remote', 'migrated')").get() as any).c;
     if (count >= circle.member_cap) return err("The circle is full — it stays intimate by design.", 403);
     const name = String(b.name || "").trim().slice(0, 40);
     if (!name) return err("Tell us your name so the circle knows who's here.", 400);
@@ -258,6 +259,19 @@ async function handle(req: Request): Promise<Response> {
       return json({ ok: true });
     }
     return err("Not found.", 404);
+  }
+
+  // circle admin: migrate content to a fresh circle, or burn it all down
+  if (req.method === "POST" && path === "/api/circle/migrate") {
+    if (me.role !== "owner") return err("Only the circle's owner can do that.", 403);
+    return json(migrateCircle(db, getMesh(), me.id));
+  }
+  if (req.method === "POST" && path === "/api/circle/burn") {
+    if (me.role !== "owner") return err("Only the circle's owner can do that.", 403);
+    const b = await body(req);
+    if (b.confirm !== "BURN") return err("Type BURN to confirm.", 400);
+    burnCircle(db, getMesh());
+    return json({ ok: true });
   }
 
   // notes
