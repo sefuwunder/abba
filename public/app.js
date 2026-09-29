@@ -295,9 +295,18 @@ async function viewCompose(kind) {
 }
 
 /* ---------- note detail ---------- */
-/* Floating response orb (after callmenick's CSS-Circle-Menu): a 15pt dot fixed
-   above the tab bar. Tapping fans statuses, actions and reactions out over
-   the interface with staggered spring timing. */
+/* Floating response orb (after callmenick's CSS-Circle-Menu): your presence pill,
+   fixed above the tab bar. Tapping fans statuses, actions and reactions out
+   over the interface with staggered spring timing. */
+const ZEN_STROKE = 'fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"';
+const ZEN = {
+  seed: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M13 4.5c3.2 4.3 4.2 9 0 13.5-4.2-4.5-3.2-9.2 0-13.5z"/></svg>',
+  sprout: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M13 21.5v-9"/><path d="M13 15.5c-3.6-.4-5.8-2.4-6.3-6.2 3.6.4 5.8 2.4 6.3 6.2z"/><path d="M13 12.5c3.6-.4 5.8-2.4 6.3-6.2-3.6.4-5.8 2.4-6.3 6.2z"/></svg>',
+  motion: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M4 9.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/><path d="M4 14.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/><path d="M4 19.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/></svg>',
+  decided: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M21.3 13a8.3 8.3 0 1 1-2.5-5.9"/></svg>',
+  resting: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M19.8 14.8A7.8 7.8 0 1 1 11.2 5.4a6.2 6.2 0 0 0 8.6 9.4z"/></svg>',
+  share: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><circle cx="13" cy="13" r="1.8" fill="currentColor" stroke="none"/><circle cx="13" cy="13" r="6.2"/><circle cx="13" cy="13" r="10.5"/></svg>',
+};
 function orbHtml(note) {
   const items = [];
   if (note.mine) {
@@ -316,15 +325,18 @@ function orbHtml(note) {
     const a = 180 + i * step;
     const inner = it.kind === "react"
       ? '<span class="c-emoji">' + it.emoji + "</span>" + (it.count ? '<span class="c-badge">' + it.count + "</span>" : "")
-      : '<span class="c-label">' + esc(it.label) + "</span>";
+      : (ZEN[it.key] || '<span class="c-label">' + esc(it.label) + "</span>");
     return '<button class="c-item' + (it.active ? " on" : "") + '" data-ck="' + it.kind + '" data-ckey="' + it.key + '"' +
       ' style="--a:' + a.toFixed(1) + 'deg;--i:' + i + '" aria-label="' + esc(it.label || it.key) + '">' + inner + "</button>";
   }).join("");
+  const me = state.me || {};
+  const first = esc((me.name || "You").split(" ")[0]);
+  const color = esc(me.color || "#A08C5B");
   const hint = localStorage.getItem("abba_orb_seen")
     ? ""
     : '<div class="orb-hint" id="orbhint">Respond</div>';
   return '<div class="orb-wrap" id="cstage">' + sats +
-    '<button class="orb" id="ctoggle" aria-label="Respond"><span class="orb-dot"></span></button>' +
+    '<button class="orb-pill" id="ctoggle" aria-label="Respond"><span class="dot" style="background:' + color + '"></span><b>' + first + "</b></button>" +
     hint + "</div>";
 }
 function relatedHtml(related) {
