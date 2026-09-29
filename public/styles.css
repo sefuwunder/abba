@@ -6,11 +6,13 @@
   --soft: #6E6257;
   --faint: #A89A87;
   --line: #E9DFD0;
-  --terra: #C0765A;
-  --terra-deep: #9E5C40;
-  --terra-wash: #F5E7DC;
+  --hairline: #E4DDCE;
+  --terra: #A07E1C;          /* warm gold — the Apple Notes accent */
+  --terra-deep: #7D6113;
+  --terra-wash: #F7EBCB;
   --gold: #B98F2B;
-  --sage: #7A8B6F;
+  --sage: #5F8F5A;           /* "here now" green */
+  --folder: #EBCB5E;
   --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --radius: 14px;
@@ -240,3 +242,109 @@ a { color: var(--terra-deep); }
   #app { padding-top: 40px; }
   .greeting { font-size: 30px; }
 }
+
+/* ---- Apple Notes: folders, lists, large titles ---- */
+.large-title { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 6px 0 2px; }
+.large-greet { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 10px 0 4px; }
+.section-label {
+  font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--faint); margin: 28px 4px 8px;
+}
+.group {
+  background: var(--card); border-radius: var(--radius); overflow: hidden;
+  border: 1px solid var(--line);
+}
+.frow {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline); cursor: pointer; background: var(--card);
+}
+.frow:last-child { border-bottom: none; }
+.frow:active { background: #F5F0E6; }
+.frow-name { flex: 1; font-size: 16.5px; font-weight: 500; }
+.frow-count { color: var(--faint); font-size: 15px; }
+.frow-ic { font-size: 22px; color: var(--terra); width: 30px; text-align: center; }
+.chev { color: #C4BBA8; font-size: 20px; font-weight: 300; }
+.foot-note { text-align: center; color: var(--faint); font-size: 13px; margin: 26px 0 8px; }
+
+/* search */
+.search {
+  display: flex; align-items: center; gap: 8px; background: #ECE7DA;
+  border-radius: 10px; padding: 8px 12px; margin: 12px 0 4px;
+}
+.search .s-ic { color: var(--soft); font-size: 15px; }
+.search input {
+  flex: 1; border: none; background: transparent; font-size: 16px;
+  outline: none; color: var(--ink); font-family: var(--sans);
+}
+.search input::placeholder { color: var(--faint); }
+
+/* note rows */
+.list-count { color: var(--faint); font-size: 13px; margin: 0 2px 4px; }
+.ngroup { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin-top: 10px; }
+.nrow { padding: 12px 16px; border-bottom: 1px solid var(--hairline); cursor: pointer; }
+.nrow:last-child { border-bottom: none; }
+.nrow:active { background: #F5F0E6; }
+.nr-title { font-size: 16.5px; font-weight: 600; letter-spacing: -0.01em; }
+.nr-sub {
+  font-size: 13.5px; color: var(--soft); margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* floating compose */
+.fab {
+  position: fixed; right: 22px; bottom: calc(86px + env(safe-area-inset-bottom));
+  width: 58px; height: 58px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--terra); color: #fff; font-size: 24px;
+  box-shadow: 0 4px 14px rgba(125, 97, 19, 0.35);
+  display: flex; align-items: center; justify-content: center;
+  max-width: 620px;
+}
+.fab:active { transform: scale(0.94); }
+
+/* note detail */
+.note-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; margin: 8px 0 4px; }
+.note-meta { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--faint); margin: 0 0 6px; flex-wrap: wrap; }
+.reader { font-family: var(--serif); font-size: 17.5px; line-height: 1.7; padding: 6px 2px 10px; }
+.reader h1, .reader h2, .reader h3 { font-family: var(--sans); margin: 1.2em 0 0.4em; line-height: 1.3; }
+.reader h1 { font-size: 22px; } .reader h2 { font-size: 19px; } .reader h3 { font-size: 17px; }
+.reader p { margin: 0.7em 0; }
+.reader ul, .reader ol { padding-left: 1.4em; margin: 0.7em 0; }
+.reader li { margin: 0.3em 0; }
+.reader blockquote { border-left: 3px solid var(--terra); margin: 0.9em 0; padding: 2px 0 2px 14px; color: var(--soft); font-style: italic; }
+.reader code { font-family: ui-monospace, monospace; font-size: 0.88em; background: #F1EAE0; padding: 2px 6px; border-radius: 6px; }
+.reader pre { background: #2A2118; color: #F3EAD9; padding: 14px; border-radius: 10px; overflow-x: auto; }
+.reader pre code { background: none; padding: 0; color: inherit; }
+.reader hr { border: none; border-top: 1px solid var(--line); margin: 1.4em 0; }
+
+/* editor */
+.editbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.done-btn { background: none; border: none; color: var(--terra-deep); font-size: 16px; font-weight: 600; cursor: pointer; padding: 8px 2px; font-family: var(--sans); }
+.title-input {
+  width: 100%; border: none; background: transparent; outline: none;
+  font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink);
+  font-family: var(--sans); padding: 4px 2px; margin-bottom: 4px;
+}
+.title-input::placeholder { color: #CFC6B4; }
+.body-input {
+  width: 100%; border: none; background: transparent; outline: none; resize: none;
+  font-family: var(--serif); font-size: 17.5px; line-height: 1.7; color: var(--ink);
+  padding: 4px 2px; min-height: 300px;
+}
+.body-input::placeholder { color: #CFC6B4; }
+.tags-input {
+  width: 100%; border: none; background: transparent; outline: none;
+  font-size: 14px; color: var(--soft); padding: 8px 2px; font-family: var(--sans);
+}
+.tags-input::placeholder { color: #CFC6B4; }
+.share-banner {
+  background: var(--terra-wash); color: var(--terra-deep); font-size: 13.5px;
+  border-radius: 10px; padding: 8px 14px; margin: 0 0 8px;
+}
+
+/* members */
+.mrow { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+.mrow:last-child { border-bottom: none; }
+.mrow-main { flex: 1; }
+.mrow-name { font-size: 16px; font-weight: 600; }
+.mrow-sub { font-size: 13px; color: var(--faint); margin-top: 1px; }
+.mrow-sub.here { color: var(--sage); font-weight: 600; }

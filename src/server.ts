@@ -2,7 +2,7 @@
 // Bun + zero dependencies + SQLite. Port 3013.
 import { Database } from "bun:sqlite";
 import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, __setDbForTests } from "./db";
-import { autoTitle, readMins, relatedIdeas, composeDigest, nudgesFor, dismissNudge, type NoteRow } from "./mind";
+import { autoTitle, readMins, relatedIdeas, composeDigest, getDigest, listDigests, nudgesFor, dismissNudge, type NoteRow } from "./mind";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
@@ -160,9 +160,11 @@ async function handle(req: Request): Promise<Response> {
     if (!noteBody.trim()) return err("Write something first — even a fragment.", 400);
     const title = String(b.title || "").trim().slice(0, 120) || autoTitle(noteBody);
     const tags = Array.isArray(b.tags) ? b.tags.map((t: any) => String(t).slice(0, 30)).slice(0, 8) : [];
+    const shared = b.shared === true ? 1 : 0;
     const t = nowIso();
     const res = db.query(`INSERT INTO notes (member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'seed', 0, ?, ?, ?)`).run(me.id, title, noteBody, JSON.stringify(tags), readMins(noteBody), t, t);
+      VALUES (?, ?, ?, ?, 'seed', ?, ?, ?, ?)`).run(me.id, title, noteBody, JSON.stringify(tags), shared, readMins(noteBody), t, t);
+    if (shared) logEvent("shared", me.id, Number(res.lastInsertRowid), {});
     const note = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
       JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(Number(res.lastInsertRowid)) as NoteRow;
     return json({ note: noteJson(note, me) }, 201);
@@ -260,7 +262,12 @@ async function handle(req: Request): Promise<Response> {
     return err("Not found.", 404);
   }
 
-  if (req.method === "GET" && path === "/api/digest") return json({ digest: composeDigest() });
+  if (req.method === "GET" && path === "/api/digests") return json({ digests: listDigests() });
+  if (req.method === "GET" && path === "/api/digest") {
+    const d = getDigest(url.searchParams.get("week") || undefined);
+    if (!d) return err("That letter isn't on the shelf.", 404);
+    return json({ digest: d });
+  }
   if (req.method === "GET" && path === "/api/nudges") return json({ nudges: nudgesFor(me.id) });
   if (req.method === "POST" && path === "/api/nudges/dismiss") {
     const b = await body(req);

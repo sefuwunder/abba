@@ -166,6 +166,18 @@ describe("digest + nudges", () => {
     const seeds = data.digest.sections.find((s: any) => s.heading === "New seeds");
     expect(seeds.lines[0]).toMatch(/^\*\*.+\*\* — /);
   });
+  test("digest editions list + read a past edition", async () => {
+    // composing the current digest caches it
+    await api("/api/digest", {}, ownerTok);
+    const { data } = await api("/api/digests", {}, ownerTok);
+    expect(data.digests.length).toBeGreaterThanOrEqual(1);
+    const wk = data.digests[0].weekKey;
+    expect(wk).toMatch(/^\d{4}-W\d{2}$/);
+    const one = await api(`/api/digest?week=${wk}`, {}, ownerTok);
+    expect(one.data.digest.weekKey).toBe(wk);
+    expect(one.status).toBe(200);
+    expect((await api("/api/digest?week=1999-W01", {}, ownerTok)).status).toBe(404);
+  });
   test("digest has no AI fingerprints", async () => {
     const { data } = await api("/api/digest", {}, ownerTok);
     const text = JSON.stringify(data.digest).toLowerCase();

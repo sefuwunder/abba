@@ -92,6 +92,26 @@ function weekKey(d = new Date()): string {
 
 export function currentWeekKey(): string { return weekKey(); }
 
+/** Read a digest edition: cached if it exists, composed fresh for the current week, null otherwise. */
+export function getDigest(wk?: string): Digest | null {
+  const db = getDb();
+  const key = wk || weekKey();
+  const cached = db.query("SELECT payload FROM digests WHERE week_key = ?").get(key) as any;
+  if (cached) {
+    const p = JSON.parse(cached.payload);
+    return { weekKey: key, ...p };
+  }
+  if (!wk || wk === weekKey()) return composeDigest();
+  return null;
+}
+
+/** Every cached edition, newest first — the Weekly Letters shelf. */
+export function listDigests(): { weekKey: string; createdAt: string; title: string }[] {
+  const db = getDb();
+  const rows = db.query("SELECT week_key, payload, created_at FROM digests ORDER BY week_key DESC").all() as any[];
+  return rows.map((r) => ({ weekKey: r.week_key, createdAt: r.created_at, title: JSON.parse(r.payload).title || "Weekly letter" }));
+}
+
 const INTROS = [
   "A quiet look back at what the circle was thinking about this week.",
   "What moved, what landed, and what's still simmering — this week in the circle.",

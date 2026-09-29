@@ -22,11 +22,13 @@ Open `http://localhost:3013` — start a circle (you're the owner), share the in
 
 ## What it does
 
-- **Capture** — quick-capture box with draft auto-save, your private notepad
-- **Circle** — shared ideas feed with status filters and quiet presence ("Ari and June are here now")
-- **Idea view** — rendered markdown, status stepper, warm reactions (❤ felt this · 💡 sparked · 🙌 yes), comments, related ideas, `.md` export
-- **Digest** — a weekly editorial letter composed from what actually happened ("New seeds", "What moved", "Still simmering")
-- **Members** — who's in, invite code (owner can rotate it)
+Modeled after Apple Notes — folders, large titles, hairlines, quiet yellow:
+
+- **Folders** — a personal greeting, then *My Notepad*, *The Circle*, and *Weekly Letters*, each with a count
+- **Notes lists** — title + "date · status — excerpt" rows, per-folder search, floating compose button (composing inside The Circle shares immediately)
+- **Note view** — calm reading type, the single response-menu bubble (status + reactions), related notes, conversation, export
+- **Weekly Letters** — every digest edition on a shelf, newest first, each reading like a short editorial letter
+- **Circle** — members with quiet presence, invite code card (owner can rotate it)
 - **Nudges** — small, dismissible, never badges: stale sprouts, unread ideas
 
 ## Layout

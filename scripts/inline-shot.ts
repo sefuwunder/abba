@@ -53,6 +53,10 @@ const CANNED: Record<string, any> = {
   "/api/members": { members: [ME, ARI, JUNE] },
   "/api/presence": { here: [ARI, JUNE] },
   "/api/nudges": { nudges: [{ key: "stale-3", text: "\u201cKill the newsletter?\u201d has been sprouting for a while \u2014 still alive, or time to let it rest?", noteId: 3, action: "rest" }] },
+  "/api/digests": { digests: [
+    { weekKey: "2026-W40", createdAt: "2026-09-29T10:00:00.000Z", title: "This week in the circle" },
+    { weekKey: "2026-W39", createdAt: "2026-09-22T10:00:00.000Z", title: "This week in the circle" },
+  ] },
   "/api/notes": { notes: [note1, note3, note4, note5] }, // scope=circle (query stripped)
   "/api/notes/1": { note: note1 },
   "/api/notes/1/related": { related: [{ id: 3, title: "Kill the newsletter?", shared: true }, { id: 4, title: "Supplier renegotiation", shared: true }] },
@@ -86,11 +90,14 @@ Object.defineProperty(window, "localStorage", {
     clear: function(){ __memStore = {}; }
   }
 });
+var __MINE_NOTES = ${JSON.stringify([note2, note1, note3])};
+var __CIRCLE_NOTES = ${JSON.stringify([note1, note3, note4, note5])};
 var __CANNED = ${JSON.stringify(CANNED)};
 window.fetch = function(url, opts) {
   var u = String(url).split("?")[0];
-  if (u === "/api/notes" && String(url).includes("scope=mine")) {
-    return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ notes: ${JSON.stringify([note2, note1, note3])} }); } });
+  if (u === "/api/notes") {
+    var isCircle = String(url).includes("scope=circle");
+    return Promise.resolve({ ok: true, status: 200, json: function() { return Promise.resolve({ notes: isCircle ? __CIRCLE_NOTES : __MINE_NOTES }); } });
   }
   var hit = __CANNED[u];
   return Promise.resolve({ ok: !!hit, status: hit ? 200 : 404, json: function() { return Promise.resolve(hit || { error: "not found" }); } });
@@ -107,10 +114,13 @@ html = html.replace('<script src="/app.js"></script>', "<script>" + js.replace(/
 
 
 const POST: Record<string, string> = {
-  capture: `<script>setTimeout(function(){ viewCapture(); }, 400);</script>`,
-  circle: `<script>setTimeout(function(){ viewCircle(); }, 400);</script>`,
-  idea: `<script>setTimeout(function(){ viewIdea(1, false); }, 400);</script>`,
-  digest: `<script>setTimeout(function(){ viewDigest(); }, 400);</script>`,
+  folders: `<script>setTimeout(function(){ viewFolders(); }, 400);</script>`,
+  "list-mine": `<script>setTimeout(function(){ viewList("mine"); }, 400);</script>`,
+  "list-circle": `<script>setTimeout(function(){ viewList("circle"); }, 400);</script>`,
+  "list-letters": `<script>setTimeout(function(){ viewList("letters"); }, 400);</script>`,
+  detail: `<script>setTimeout(function(){ viewDetail(1, false); }, 400);</script>`,
+  compose: `<script>setTimeout(function(){ viewCompose("mine"); }, 400);</script>`,
+  letter: `<script>setTimeout(function(){ viewLetter("2026-W40"); }, 400);</script>`,
   members: `<script>setTimeout(function(){ viewMembers(); }, 400);</script>`,
 };
 html = html.replace("</body>", (POST[which] || "") + "</body>");
