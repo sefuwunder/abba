@@ -33,6 +33,20 @@ export function loadOrCreateIdentity(dataDir: string): Identity {
   return idn;
 }
 
+/** Always mint a brand-new identity and persist it (factory reset). */
+export function createIdentity(dataDir: string): Identity {
+  mkdirSync(dataDir, { recursive: true });
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubDer = publicKey.export({ format: "der", type: "spki" }) as Buffer;
+  const idn: Identity = {
+    id: peerIdFor(pubDer.toString("base64")),
+    publicKey: pubDer.toString("base64"),
+    privateKey: (privateKey.export({ format: "der", type: "pkcs8" }) as Buffer).toString("base64"),
+  };
+  writeFileSync(join(dataDir, "identity.json"), JSON.stringify(idn, null, 2), { mode: 0o600 });
+  return idn;
+}
+
 export function signData(idn: Identity, data: string): string {
   const key = createPrivateKey({ key: Buffer.from(idn.privateKey, "base64"), format: "der", type: "pkcs8" });
   return sign(null, Buffer.from(data, "utf8"), key).toString("base64");

@@ -179,3 +179,52 @@ describe("migrate/burn across the mesh", () => {
     expect(notes.notes.length).toBe(0);
   });
 });
+
+describe("reset", () => {
+  const R_PORT = 32107;
+  let tokenR = "";
+  const nodeIdOf = (code: string): string =>
+    JSON.parse(Buffer.from(code, "base64url").toString("utf8")).id;
+
+  beforeAll(async () => {
+    spawn(R_PORT, mkdtempSync(join(tmpdir(), "abba-reset-")));
+    await waitUp(R_PORT);
+    const r = await api(R_PORT, "/api/circle/init", {
+      method: "POST", ...auth(""), body: JSON.stringify({ name: "Doomed", ownerName: "Zed" }),
+    });
+    tokenR = r.token;
+    await api(R_PORT, "/api/notes", { method: "POST", ...auth(tokenR), body: JSON.stringify({ body: "wipe me", shared: true }) });
+  }, 60000);
+
+  test("non-owner cannot reset", async () => {
+    const m = await api(R_PORT, "/api/join", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: (await api(R_PORT, "/api/circle", auth(tokenR))).inviteCode, name: "Pip" }),
+    });
+    try {
+      await api(R_PORT, "/api/circle/reset", { method: "POST", ...auth(m.token) });
+      expect.unreachable();
+    } catch (e: any) { expect(String(e.message)).toContain("owner"); }
+  });
+
+  test("reset wipes everything and mints a new identity", async () => {
+    const before = await api(R_PORT, "/api/mesh/invite", { method: "POST", ...auth(tokenR) });
+    await api(R_PORT, "/api/circle/reset", { method: "POST", ...auth(tokenR) });
+    // back to the welcome screen
+    const st = await api(R_PORT, "/api/status");
+    expect(st.hasCircle).toBe(false);
+    // old tokens are dead
+    try { await api(R_PORT, "/api/notes?scope=mine", auth(tokenR)); expect.unreachable(); }
+    catch (e: any) { expect(String(e.message)).toContain("signed in"); }
+    // a brand-new circle starts empty with a new node identity
+    const r2 = await api(R_PORT, "/api/circle/init", {
+      method: "POST", ...auth(""), body: JSON.stringify({ name: "Fresh", ownerName: "Zed" }),
+    });
+    const after = await api(R_PORT, "/api/mesh/invite", { method: "POST", ...auth(r2.token) });
+    expect(nodeIdOf(after.code)).not.toBe(nodeIdOf(before.code));
+    const notes = await api(R_PORT, "/api/notes?scope=mine", auth(r2.token));
+    expect(notes.notes.length).toBe(0);
+    const members = await api(R_PORT, "/api/members", auth(r2.token));
+    expect(members.members.length).toBe(1);
+  });
+});

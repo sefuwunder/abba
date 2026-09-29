@@ -12,7 +12,10 @@
 import type { Database } from "bun:sqlite";
 import { MeshStore } from "./mesh/store";
 import { gossipRound } from "./mesh/sync";
+import { createIdentity } from "./mesh/identity";
 import { getDb, dataDirPath, nowIso } from "./db";
+import { readdirSync, rmSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 export function publicUrl(): string {
   const u = process.env.ABBA_PUBLIC_URL || process.env.PUBLIC_URL ||
@@ -227,6 +230,17 @@ export async function meshTick(): Promise<void> {
     const n = applyMeshUpdates(m, db);
     if (n) console.log(`[mesh] applied ${n} update(s)`);
   } catch (e) { console.error("[mesh] apply:", (e as any)?.message); }
+}
+
+/** Factory reset the mesh node: new identity, empty KV/peers/blobs. */
+export function resetMeshNode(): void {
+  const m = getMesh();
+  m.db.exec("DELETE FROM peers; DELETE FROM kv; DELETE FROM blobs; DELETE FROM log_entries;");
+  try {
+    for (const f of readdirSync(join(m.dataDir, "blobs"))) rmSync(join(m.dataDir, "blobs", f), { recursive: true });
+    mkdirSync(join(m.dataDir, "blobs"), { recursive: true });
+  } catch { /* nothing stored yet */ }
+  m.identity = createIdentity(m.dataDir);
 }
 
 /** Publish a member's credential snapshot so the account can be re-opened

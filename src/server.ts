@@ -8,7 +8,7 @@ import {
   publishNote, publishNoteTombstone, publishReaction, publishComment,
   publishMemberCredential, findMeshCredential,
 } from "./meshbridge";
-import { migrateCircle, burnCircle, exportMemberBundle, importBundle } from "./circleadmin";
+import { migrateCircle, burnCircle, resetAbba, exportMemberBundle, importBundle } from "./circleadmin";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
@@ -285,6 +285,11 @@ async function handle(req: Request): Promise<Response> {
     const b = await body(req);
     if (b.confirm !== "BURN") return err("Type BURN to confirm.", 400);
     burnCircle(db, getMesh());
+    return json({ ok: true });
+  }
+  if (req.method === "POST" && path === "/api/circle/reset") {
+    if (me.role !== "owner") return err("Only the circle's owner can do that.", 403);
+    resetAbba(db, getMesh());
     return json({ ok: true });
   }
 

@@ -10,7 +10,7 @@
 import type { Database } from "bun:sqlite";
 import type { MeshStore } from "./mesh/store";
 import {
-  gidFor, remoteMember, publishNote, publishReaction, publishComment,
+  gidFor, remoteMember, publishNote, publishReaction, publishComment, resetMeshNode,
 } from "./meshbridge";
 import { nowIso, randomToken, randomInviteCode } from "./db";
 
@@ -128,6 +128,18 @@ export function burnCircle(db: Database, mesh: MeshStore): void {
     db.query(`DELETE FROM ${t}`).run();
   }
   db.query("DELETE FROM circle").run();
+}
+
+/** Factory reset: burn the circle AND the mesh node itself — new identity,
+    empty KV/peers, cleared blocklist. The instance is indistinguishable from
+    a fresh install. Unlike burn, no tombstones go out: there is no identity
+    left to speak for the old circle. */
+export function resetAbba(db: Database, _mesh: MeshStore): void {
+  for (const t of ["reactions", "comments", "notes", "events", "digests", "nudges_seen", "mesh_seen", "mesh_blocked_nodes", "members"]) {
+    db.query(`DELETE FROM ${t}`).run();
+  }
+  db.query("DELETE FROM circle").run();
+  resetMeshNode();
 }
 
 // ---- member migration: fork to your own circle --------------------------------

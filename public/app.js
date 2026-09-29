@@ -570,6 +570,9 @@ async function viewMembers() {
       <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
       <p class="sub" style="margin:0 0 10px">Burning destroys the circle on this Abba — members, notes, everything. Peered instances are told to drop shared notes. This can't be undone.</p>
       <div class="btn-row"><button class="btn btn-ghost" id="circ-burn" style="color:#B0442F;border-color:#E3B7A9">Burn circle</button></div>
+      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
+      <p class="sub" style="margin:0 0 10px">Reset wipes everything — circle, notes, members, and this Abba's identity — and starts over as a fresh install. Peered copies keep what they already synced.</p>
+      <div class="btn-row"><button class="btn btn-ghost" id="circ-reset" style="color:#B0442F;border-color:#E3B7A9">Reset Abba</button></div>
     </div>` : `
     <p class="section-label">Your own circle</p>
     <div class="card">
@@ -629,6 +632,16 @@ async function viewMembers() {
       a.download = "abba-migrate-" + (state.me.name || "me").toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".json";
       document.body.appendChild(a); a.click(); a.remove();
       toast("Bundle downloaded — import it on a fresh Abba's welcome screen.");
+    } catch (e) { toast(e.message); }
+  };
+  const rst = $("#circ-reset");
+  if (rst) rst.onclick = async () => {
+    if (!confirm("Reset Abba to a fresh install? Everything on this Abba — circle, notes, members, identity — is wiped. This can't be undone.")) return;
+    try {
+      await api("/api/circle/reset", { method: "POST" });
+      localStorage.removeItem("abba_token");
+      location.hash = "#/welcome";
+      await boot(true);
     } catch (e) { toast(e.message); }
   };
   heartbeat("members");

@@ -90,6 +90,12 @@ peers drop them; the tombstones persist in the local mesh KV so even a later
 re-peer converges on "deleted" instead of resurrecting notes. Type `BURN` to
 confirm. There is no undo.
 
+**Reset** (owner, Danger zone) is the factory reset: it wipes the circle,
+notes, members, the mesh blocklist — and mints a brand-new mesh identity with
+empty sync state. The instance is indistinguishable from a fresh install.
+Unlike burn, no tombstones go out; peered copies simply keep what they already
+synced.
+
 ## Forking as a non-host (migrate to your own circle)
 
 Any member can **Migrate to your own circle** — instead of restructuring in
