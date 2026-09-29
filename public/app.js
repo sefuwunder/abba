@@ -99,7 +99,7 @@ function weekRangeLabel(wk) {
 }
 const STATUS_LABEL = { seed: "Seed", sprout: "Sprout", motion: "In motion", decided: "Decided", resting: "Resting" };
 const STATUS_FLOW = ["seed", "sprout", "motion", "decided"];
-const REACT_META = { felt: ["❤", "felt this"], spark: ["💡", "sparked"], yes: ["🙌", "yes"] };
+const REACT_META = { felt: ["❤️", "felt this"], spark: ["💡", "sparked"], yes: ["🙌", "yes"] };
 
 function plainExcerpt(body) {
   const line = String(body || "").split("\n").filter(l => l.trim() && !/^#{1,3}\s/.test(l.trim()))[0] || "";
@@ -295,33 +295,35 @@ async function viewCompose(kind) {
 }
 
 /* ---------- note detail ---------- */
-function respondMenuHtml(note) {
-  let statusPart;
+/* Radial response menu (after callmenick's CSS-Circle-Menu): the center button
+   shows the current status; tapping fans out statuses, actions and reactions
+   with staggered spring timing. */
+function circleMenuHtml(note) {
+  const items = [];
   if (note.mine) {
-    const seg = STATUS_FLOW.map(function (s) {
-      const on = note.status === s ? " on" : "";
-      return '<button data-status="' + s + '" class="' + on.trim() + '">' + STATUS_LABEL[s] + "</button>";
-    }).join("");
-    const restBtn = note.status !== "resting"
-      ? '<button data-status="resting">Let it rest</button>'
-      : '<button data-status="seed">Wake it up</button>';
-    const shareBtn = !note.shared
-      ? '<button id="share">Bring to circle</button>'
-      : '<button id="unshare">Take back to notepad</button>';
-    statusPart = '<div class="seg">' + seg + "</div>" +
-      '<div class="respond-sub">' + restBtn + '<span class="dot-sep">·</span>' + shareBtn + "</div>";
-  } else {
-    statusPart = '<div class="respond-sub" style="margin-top:0"><span class="pill ' + note.status + '">' +
-      (STATUS_LABEL[note.status] || note.status) + "</span></div>";
+    STATUS_FLOW.forEach(s => items.push({ kind: "status", key: s, label: STATUS_LABEL[s], active: note.status === s }));
+    items.push({ kind: "status", key: "resting", label: note.status === "resting" ? "Wake up" : "Rest", active: note.status === "resting" });
+    items.push({ kind: "share", key: "share", label: note.shared ? "Unshare" : "Share", active: false });
   }
-  const reacts = Object.keys(REACT_META).map(function (k) {
-    const g = REACT_META[k][0], label = REACT_META[k][1];
-    const on = note.myReactions.indexOf(k) >= 0 ? " on" : "";
-    const n = note.reactionCounts[k] || 0;
-    return '<button class="react' + on + '" data-react="' + k + '">' + g + " " + label + " · " + n + "</button>";
+  Object.keys(REACT_META).forEach(k => {
+    items.push({
+      kind: "react", key: k, emoji: REACT_META[k][0], label: REACT_META[k][1],
+      count: note.reactionCounts[k] || 0, active: note.myReactions.indexOf(k) >= 0,
+    });
+  });
+  const n = items.length, step = 360 / n;
+  const sats = items.map((it, i) => {
+    const a = -90 + i * step;
+    const inner = it.kind === "react"
+      ? '<span class="c-emoji">' + it.emoji + "</span>" + (it.count ? '<span class="c-badge">' + it.count + "</span>" : "")
+      : '<span class="c-label">' + esc(it.label) + "</span>";
+    return '<button class="c-item' + (it.active ? " on" : "") + '" data-ck="' + it.kind + '" data-ckey="' + it.key + '"' +
+      ' style="--a:' + a.toFixed(1) + 'deg;--i:' + i + '" aria-label="' + esc(it.label || it.key) + '">' + inner + "</button>";
   }).join("");
-  return '<div class="card respond">' + statusPart +
-    '<div class="respond-div"></div><div class="reacts">' + reacts + "</div></div>";
+  const centerLabel = STATUS_LABEL[note.status] || note.status;
+  return '<div class="card circle-card"><div class="circle-stage" id="cstage">' +
+    '<button class="c-center" id="ctoggle" aria-label="Respond">' + esc(centerLabel) + "</button>" +
+    sats + '</div><p class="circle-hint">Tap to respond</p></div>';
 }
 function relatedHtml(related) {
   if (!related.length) return "";
@@ -374,7 +376,7 @@ function detailBodyHtml(note, related) {
     '<p class="note-meta"><span class="dot" style="background:' + esc(note.author.color) + '"></span>' +
     esc(note.author.name) + " · " + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min</p>" +
     tags + '<div class="reader">' + md(note.body) + "</div>" +
-    respondMenuHtml(note) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
+    circleMenuHtml(note) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
 }
 
 async function viewDetail(id, editing) {
@@ -418,20 +420,30 @@ async function viewDetail(id, editing) {
     };
     return;
   }
-  app.querySelectorAll("[data-status]").forEach(b => b.onclick = async () => {
-    try {
-      await api("/api/notes/" + id, { method: "PATCH", body: JSON.stringify({ status: b.dataset.status }) });
-      toast(b.dataset.status === "decided" ? "Marked decided. Nice." : "Updated.");
-      viewDetail(id, false);
-    } catch (e) { toast(e.message); }
-  });
-  const sh = $("#share"), ush = $("#unshare");
-  if (sh) sh.onclick = async () => { try { await api("/api/notes/" + id + "/share", { method: "POST" }); toast("Shared with the circle."); viewDetail(id, false); } catch (e) { toast(e.message); } };
-  if (ush) ush.onclick = async () => { try { await api("/api/notes/" + id + "/unshare", { method: "POST" }); toast("Back in your notepad."); viewDetail(id, false); } catch (e) { toast(e.message); } };
-  app.querySelectorAll("[data-react]").forEach(b => b.onclick = async () => {
-    try { await api("/api/notes/" + id + "/react", { method: "POST", body: JSON.stringify({ kind: b.dataset.react }) }); viewDetail(id, false); }
-    catch (e) { toast(e.message); }
-  });
+  const stage = $("#cstage"), ctoggle = $("#ctoggle");
+  if (stage && ctoggle) {
+    const centerText = ctoggle.textContent;
+    ctoggle.onclick = () => {
+      const open = stage.classList.toggle("open");
+      ctoggle.textContent = open ? "✕" : centerText;
+      ctoggle.setAttribute("aria-label", open ? "Close" : "Respond");
+    };
+    app.querySelectorAll(".c-item").forEach(b => b.onclick = async () => {
+      const kind = b.dataset.ck, key = b.dataset.ckey;
+      try {
+        if (kind === "status") {
+          await api("/api/notes/" + id, { method: "PATCH", body: JSON.stringify({ status: key }) });
+          toast(key === "decided" ? "Marked decided. Nice." : "Updated.");
+        } else if (kind === "share") {
+          await api("/api/notes/" + id + (note.shared ? "/unshare" : "/share"), { method: "POST" });
+          toast(note.shared ? "Back in your notepad." : "Shared with the circle.");
+        } else if (kind === "react") {
+          await api("/api/notes/" + id + "/react", { method: "POST", body: JSON.stringify({ kind: key }) });
+        }
+        viewDetail(id, false);
+      } catch (e) { toast(e.message); }
+    });
+  }
   $("#csend").onclick = async () => {
     const v = $("#cbox").value.trim();
     if (!v) return;

@@ -26,7 +26,7 @@ Modeled after Apple Notes — folders, large titles, hairlines, quiet yellow:
 
 - **Folders** — a personal greeting, then *My Notepad*, *The Circle*, and *Weekly Letters*, each with a count
 - **Notes lists** — title + "date · status — excerpt" rows, per-folder search, floating compose button (composing inside The Circle shares immediately)
-- **Note view** — calm reading type, the single response-menu bubble (status + reactions), related notes, conversation, export
+- **Note view** — calm reading type, a radial response menu (tap the status orb: statuses, rest/share, and reactions fan out around it), related notes, conversation, export
 - **Weekly Letters** — every digest edition on a shelf, newest first, each reading like a short editorial letter
 - **Circle** — members with quiet presence, invite code card (owner can rotate it)
 - **Nudges** — small, dismissible, never badges: stale sprouts, unread ideas

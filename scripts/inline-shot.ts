@@ -119,6 +119,7 @@ const POST: Record<string, string> = {
   "list-circle": `<script>setTimeout(function(){ viewList("circle"); }, 400);</script>`,
   "list-letters": `<script>setTimeout(function(){ viewList("letters"); }, 400);</script>`,
   detail: `<script>setTimeout(function(){ viewDetail(1, false); }, 400);</script>`,
+  "circle-open": `<script>setTimeout(function(){ viewDetail(1, false); setTimeout(function(){ var t = document.getElementById("ctoggle"); if (t) t.click(); }, 700); }, 400);</script>`,
   compose: `<script>setTimeout(function(){ viewCompose("mine"); }, 400);</script>`,
   letter: `<script>setTimeout(function(){ viewLetter("2026-W40"); }, 400);</script>`,
   members: `<script>setTimeout(function(){ viewMembers(); }, 400);</script>`,
