@@ -209,6 +209,33 @@ export async function meshTick(): Promise<void> {
   } catch (e) { console.error("[mesh] apply:", (e as any)?.message); }
 }
 
+/** Publish a member's credential snapshot so the account can be re-opened
+    from the mesh with the secret. Call after a password is set. */
+export function publishMemberCredential(m: MeshStore, db: Database, memberId: number): void {
+  const mem = db.query("SELECT * FROM members WHERE id = ?").get(memberId) as any;
+  if (!mem || !mem.password_hash || mem.role === "remote") return;
+  m.putKv(`abba:member:${m.identity.id}:${mem.id}`, JSON.stringify({
+    name: mem.name, color: mem.color, role: mem.role,
+    passwordHash: mem.password_hash, updatedAt: Date.now(), originNode: m.identity.id,
+  }));
+}
+
+/** Find the newest mesh credential for a name (any origin but our own). */
+export function findMeshCredential(m: MeshStore, name: string): any | null {
+  const lower = String(name).toLowerCase();
+  let best: any = null;
+  for (const row of m.listKv()) {
+    if (!row.k.startsWith("abba:member:")) continue;
+    try {
+      const c = JSON.parse(row.v);
+      if (c.originNode === m.identity.id) continue;
+      if (String(c.name || "").toLowerCase() !== lower || !c.passwordHash) continue;
+      if (!best || row.ts > best.ts) best = { ...c, ts: row.ts };
+    } catch { /* skip malformed */ }
+  }
+  return best;
+}
+
 /** The peer-facing sync protocol (no auth — payloads are signed). */
 export function meshProtocol(m: MeshStore, req: Request, url: URL): Response | null {
   const path = url.pathname;

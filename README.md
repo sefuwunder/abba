@@ -76,6 +76,25 @@ New env: `ABBA_PUBLIC_URL` (falls back to `PUBLIC_URL`), `ABBA_PORT`, `ABBA_DATA
 The mesh identity lives at `$ABBA_DATA/identity.json`, sync state in
 `$ABBA_DATA/mesh.db`.
 
+## Account secrets (re-open with a password)
+
+Bearer tokens live in the browser — lose the browser data and the account is
+locked out. A secret fixes that:
+
+- **Circle → Account → Set secret** stores an argon2id hash on your member row
+  (never the secret itself).
+- Signed out? The welcome screen's **"Re-open with a secret"** takes your name
+  + secret and hands back your token.
+- The credential (name, color, **hash**) also syncs through the mesh as
+  `abba:member:<node>:<id>`, so the account re-opens on any peered instance —
+  even one that never saw you join. The recreated row is always a plain member
+  with a fresh token; bearer tokens never cross the wire.
+
+Security notes: the hash is visible to peered instances by design, so make the
+secret a real passphrase — anyone holding the hash can brute-force it offline.
+The re-open endpoint is rate-limited (10 tries/minute/IP) and answers
+ambiguously. Remote (synced) shadow members can never be re-opened.
+
 ## Notes
 
 - One circle per Abba instance. Data lives in `./data/abba.db` (gitignored).

@@ -383,3 +383,10 @@ a { color: var(--terra-deep); }
 .mesh-peers { border-top: 1px solid var(--hairline); margin-top: 4px; }
 .mesh-peers .mrow { padding: 10px 0; }
 #mesh-card input.mono { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); }
+
+/* ---- account ---- */
+#acc-pass {
+  padding: 10px 12px; font-size: 15px; font-family: var(--sans);
+  border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink);
+}
+#acc-pass:focus { outline: 2px solid var(--terra-wash); border-color: var(--terra); }

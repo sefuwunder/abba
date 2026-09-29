@@ -6,6 +6,7 @@ import { autoTitle, readMins, relatedIdeas, composeDigest, getDigest, listDigest
 import {
   getMesh, publicUrl, meshTick, meshProtocol, ensureNoteGids,
   publishNote, publishNoteTombstone, publishReaction, publishComment,
+  publishMemberCredential, findMeshCredential,
 } from "./meshbridge";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
@@ -14,6 +15,16 @@ const STATUSES = ["seed", "sprout", "motion", "decided", "resting"] as const;
 const REACTIONS = ["felt", "spark", "yes"] as const; // ❤ felt this · 💡 sparked · 🙌 yes
 
 initDataDir();
+
+// light rate limit for the public re-open endpoint (10 tries / minute / ip)
+const reopenAttempts = new Map<string, number[]>();
+function reopenAllowed(ip: string): boolean {
+  const now = Date.now();
+  const arr = (reopenAttempts.get(ip) || []).filter((t) => now - t < 60_000);
+  arr.push(now);
+  reopenAttempts.set(ip, arr);
+  return arr.length <= 10;
+}
 
 // ---- helpers -------------------------------------------------------------------
 function json(data: unknown, status = 200): Response {
@@ -114,6 +125,43 @@ async function handle(req: Request): Promise<Response> {
     return json({ token, member: publicMember(member) });
   }
 
+  // public: re-open an account with name + secret. Works when the account row
+  // lives on this device, or when its credential was synced through the mesh.
+  if (req.method === "POST" && path === "/api/account/reopen") {
+    const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "local";
+    if (!reopenAllowed(ip)) return err("Too many attempts — wait a minute.", 429);
+    const b = await body(req);
+    const name = String(b.name || "").trim();
+    const password = String(b.password || "");
+    if (!name || !password) return err("Name and secret required.", 400);
+    const fail = () => err("No account matches that name and secret.", 404);
+    // 1. on this device
+    const cands = db.query(
+      "SELECT * FROM members WHERE LOWER(name) = LOWER(?) AND password_hash IS NOT NULL AND role != 'remote'",
+    ).all(name) as any[];
+    for (const c of cands) {
+      if (await Bun.password.verify(password, c.password_hash)) {
+        db.query("UPDATE members SET last_seen = ? WHERE id = ?").run(nowIso(), c.id);
+        return json({ token: c.token, member: publicMember(c) });
+      }
+    }
+    // 2. in the mesh
+    const circle = db.query("SELECT id, member_cap FROM circle WHERE id = 1").get() as any;
+    if (!circle) return fail();
+    const cred = findMeshCredential(getMesh(), name);
+    if (cred && await Bun.password.verify(password, cred.passwordHash)) {
+      const count = (db.query("SELECT COUNT(*) AS c FROM members WHERE role != 'remote'").get() as any).c;
+      if (count >= circle.member_cap) return err("The circle is full — it stays intimate by design.", 403);
+      const token = randomToken("abba_");
+      const res = db.query(
+        "INSERT INTO members (name, color, token, role, created_at, last_seen, password_hash) VALUES (?, ?, ?, 'member', ?, ?, ?)",
+      ).run(String(cred.name).slice(0, 40), cred.color || "#A08C5B", token, nowIso(), nowIso(), cred.passwordHash);
+      const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
+      return json({ token, member: publicMember(member), fromMesh: true });
+    }
+    return fail();
+  }
+
   // public status: does a circle exist yet? (for the welcome screen)
   if (req.method === "GET" && path === "/api/status") {
     const circle = db.query("SELECT id FROM circle WHERE id = 1").get();
@@ -139,6 +187,17 @@ async function handle(req: Request): Promise<Response> {
   touchPresence(me, url.searchParams.get("view") || "");
 
   if (req.method === "GET" && path === "/api/me") return json({ member: publicMember(me) });
+  // set (or change) the secret that can re-open this account later
+  if (req.method === "POST" && path === "/api/account/password") {
+    const b = await body(req);
+    const password = String(b.password || "");
+    if (password.length < 4) return err("Use at least 4 characters — a short phrase is best.", 400);
+    if (password.length > 256) return err("Keep it under 256 characters.", 400);
+    const hash = await Bun.password.hash(password);
+    db.query("UPDATE members SET password_hash = ? WHERE id = ?").run(hash, me.id);
+    publishMemberCredential(getMesh(), db, me.id);
+    return json({ ok: true });
+  }
   if (req.method === "GET" && path === "/api/circle") {
     const circle = db.query("SELECT * FROM circle WHERE id = 1").get() as any;
     return json({ name: circle?.name || "The Circle", inviteCode: circle?.invite_code, memberCap: circle?.member_cap || 12 });
@@ -346,7 +405,7 @@ async function handle(req: Request): Promise<Response> {
 }
 
 function publicMember(m: any): any {
-  return { id: m.id, name: m.name, color: m.color, role: m.role };
+  return { id: m.id, name: m.name, color: m.color, role: m.role, hasPassword: !!m.password_hash };
 }
 
 export function __resetForTests(d: Database): void { __setDbForTests(d); }

@@ -102,7 +102,7 @@ function migrate(d: Database): void {
     );
   `);
   // mesh columns (added after the fact — idempotent)
-  for (const [table, column] of [["notes", "gid"], ["comments", "remote_gid"]]) {
+  for (const [table, column] of [["notes", "gid"], ["comments", "remote_gid"], ["members", "password_hash"]]) {
     const cols = d.query(`PRAGMA table_info(${table})`).all() as any[];
     if (!cols.some((c) => c.name === column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
   }

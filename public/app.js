@@ -545,7 +545,17 @@ async function viewMembers() {
       </div>
     </div>
     <p class="section-label">Mesh sync</p>
-    <div class="card" id="mesh-card"><p class="sub" id="mesh-loading">Checking the mesh…</p></div>`;
+    <div class="card" id="mesh-card"><p class="sub" id="mesh-loading">Checking the mesh…</p></div>
+    <p class="section-label">Account</p>
+    <div class="card">
+      <p class="sub" style="margin:0 0 10px">${state.me.hasPassword
+        ? "A secret is set — your name + secret re-opens this account, here or through the mesh."
+        : "No secret yet. Set one and your name + secret will always re-open this account."}</p>
+      <div class="btn-row">
+        <input id="acc-pass" type="password" placeholder="new secret (4+ characters)" style="flex:1;min-width:0" autocomplete="new-password">
+        <button class="btn btn-primary" id="acc-set">Set secret</button>
+      </div>
+    </div>`;
   $("#copy").onclick = async () => {
     const link = location.origin + location.pathname + "#/welcome?code=" + state.circle.inviteCode;
     try { await navigator.clipboard.writeText(link); toast("Invite link copied."); }
@@ -557,6 +567,16 @@ async function viewMembers() {
     catch (e) { toast(e.message); }
   };
   renderMeshCard(isOwner);
+  const accSet = $("#acc-set");
+  if (accSet) accSet.onclick = async () => {
+    const pw = ($("#acc-pass") || {}).value || "";
+    try {
+      await api("/api/account/password", { method: "POST", body: JSON.stringify({ password: pw }) });
+      toast("Secret set.");
+      state.me.hasPassword = true;
+      viewMembers();
+    } catch (e) { toast(e.message); }
+  };
   heartbeat("members");
 }
 
@@ -645,8 +665,35 @@ async function viewWelcome() {
       ${hasCircle ? `<div class="field"><label>Invite code</label><input id="w-code" placeholder="abba-…" autocomplete="off"></div>` : ""}
       <div class="btn-row"><button class="btn btn-primary" id="w-go">${hasCircle ? "Join the circle" : "Start our circle"}</button></div>
     </div>
+    ${hasCircle ? `<p class="sub" style="margin-top:14px"><a href="#" id="w-reopen-link" style="color:var(--terra-deep)">Lost your sign-in? Re-open with a secret</a></p>` : ""}
+    <div class="card" id="w-reopen-card" style="display:none;text-align:left">
+      <div class="eyebrow" style="margin-top:0">Re-open your account</div>
+      <div class="field"><label>Your name</label><input id="w-r-name" placeholder="The name the circle knows you by" maxlength="40"></div>
+      <div class="field"><label>Secret</label><input id="w-r-pass" type="password" placeholder="Your secret phrase" autocomplete="current-password"></div>
+      <div class="btn-row"><button class="btn btn-primary" id="w-r-go">Re-open my account</button></div>
+      <p class="sub" style="margin:10px 0 0">Works on this Abba, or anywhere your account reached through mesh sync.</p>
+    </div>
     <p class="sub" style="margin-top:18px">One circle per Abba · stays intimate by design.</p>
   </div>`;
+  const rl = $("#w-reopen-link");
+  if (rl) rl.onclick = (e) => {
+    e.preventDefault();
+    $("#w-reopen-card").style.display = "block";
+    rl.parentElement.style.display = "none";
+  };
+  const rgo = $("#w-r-go");
+  if (rgo) rgo.onclick = async () => {
+    const name = ($("#w-r-name") || {}).value || "";
+    const password = ($("#w-r-pass") || {}).value || "";
+    if (!name.trim() || !password) { toast("Name and secret, both."); return; }
+    try {
+      const data = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: name.trim(), password }) });
+      localStorage.setItem("abba_token", data.token);
+      toast(data.fromMesh ? "Account restored from the mesh. Welcome back." : "Welcome back.");
+      location.hash = "#/folders";
+      await boot(true);
+    } catch (e) { toast(e.message); }
+  };
   $("#w-go").onclick = async () => {
     const name = ($("#w-name") || {}).value || "";
     if (!name.trim()) { toast("Tell us your name first."); return; }

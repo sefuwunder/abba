@@ -149,3 +149,82 @@ describe("abba over mesh", () => {
     }
   });
 });
+
+describe("account password + reopen", () => {
+  const secret = "june's orchard passphrase";
+
+  test("set secret, then re-open on the same device", async () => {
+    await api(A_PORT, "/api/account/password", {
+      method: "POST", ...auth(tokenA), body: JSON.stringify({ password: secret }),
+    });
+    const me = await api(A_PORT, "/api/me", auth(tokenA));
+    expect(me.member.hasPassword).toBe(true);
+    // token "lost" — re-open with name + secret, no bearer
+    const ro = await api(A_PORT, "/api/account/reopen", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "june", password: secret }),
+    });
+    expect(ro.token).toBeTruthy();
+    expect(ro.fromMesh).toBeUndefined();
+    const me2 = await api(A_PORT, "/api/me", auth(ro.token));
+    expect(me2.member.name).toBe("June");
+  });
+
+  test("wrong secret fails closed", async () => {
+    try {
+      await api(A_PORT, "/api/account/reopen", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "June", password: "wrong guess" }),
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(String(e.message)).toContain("No account matches");
+    }
+  });
+
+  test("short secret rejected", async () => {
+    try {
+      await api(A_PORT, "/api/account/password", {
+        method: "POST", ...auth(tokenA), body: JSON.stringify({ password: "abc" }),
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(String(e.message)).toContain("at least 4");
+    }
+  });
+
+  test("re-open from the mesh on the peered instance", async () => {
+    // pull the credential KV that A's password-set published
+    await api(B_PORT, "/api/mesh/sync", { method: "POST", ...auth(tokenB) });
+    // B has no June — the mesh provides her
+    const ro = await api(B_PORT, "/api/account/reopen", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "June", password: secret }),
+    });
+    expect(ro.fromMesh).toBe(true);
+    expect(ro.member.role).toBe("member");
+    expect(ro.member.name).toBe("June");
+    const me = await api(B_PORT, "/api/me", auth(ro.token));
+    expect(me.member.name).toBe("June");
+    // the hash carried over: a second re-open now resolves locally
+    const ro2 = await api(B_PORT, "/api/account/reopen", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "June", password: secret }),
+    });
+    expect(ro2.fromMesh).toBeUndefined();
+    expect(ro2.member.id).toBe(ro.member.id);
+  });
+
+  test("remote shadow members can't be re-opened", async () => {
+    // Sam reacted on B earlier; if a shadow ever got a hash it still must not open
+    try {
+      await api(A_PORT, "/api/account/reopen", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Nobody Here", password: secret }),
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(String(e.message)).toContain("No account matches");
+    }
+  });
+});
