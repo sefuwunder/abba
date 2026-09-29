@@ -92,6 +92,8 @@ async function handle(req: Request): Promise<Response> {
     return new Response(Bun.file(`${import.meta.dir}/../public/app.js`), { headers: { "Content-Type": "text/javascript" } });
   if (req.method === "GET" && path === "/styles.css")
     return new Response(Bun.file(`${import.meta.dir}/../public/styles.css`), { headers: { "Content-Type": "text/css" } });
+  if (req.method === "GET" && path === "/favicon.svg")
+    return new Response(Bun.file(`${import.meta.dir}/../public/favicon.svg`), { headers: { "Content-Type": "image/svg+xml" } });
 
   // bootstrap: create the circle (only when none exists)
   if (req.method === "POST" && path === "/api/circle/init") {

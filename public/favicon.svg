@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- ear tufts -->
+  <path d="M16 20 L12 4 L26 12 Z" fill="#A07E1C"/>
+  <path d="M48 20 L52 4 L38 12 Z" fill="#A07E1C"/>
+  <!-- body -->
+  <path d="M32 10 C18 10 10 22 10 36 C10 50 20 60 32 60 C44 60 54 50 54 36 C54 22 46 10 32 10 Z" fill="#A07E1C"/>
+  <!-- belly -->
+  <path d="M32 34 C24 34 20 42 20 50 C20 55 25 58 32 58 C39 58 44 55 44 50 C44 42 40 34 32 34 Z" fill="#C9A44A" opacity="0.55"/>
+  <!-- wings -->
+  <path d="M13 34 C15 44 18 51 23 55" stroke="#7D6113" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.7"/>
+  <path d="M51 34 C49 44 46 51 41 55" stroke="#7D6113" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.7"/>
+  <!-- eyes -->
+  <circle cx="23" cy="27" r="8.5" fill="#FAF6F1"/>
+  <circle cx="41" cy="27" r="8.5" fill="#FAF6F1"/>
+  <circle cx="23.5" cy="28" r="3.6" fill="#221A12"/>
+  <circle cx="40.5" cy="28" r="3.6" fill="#221A12"/>
+  <circle cx="24.7" cy="26.8" r="1.2" fill="#FAF6F1"/>
+  <circle cx="41.7" cy="26.8" r="1.2" fill="#FAF6F1"/>
+  <!-- beak -->
+  <path d="M32 35 L28 39 L32 44 L36 39 Z" fill="#7D6113"/>
+  <!-- feet -->
+  <path d="M25 60 l0 2 M27 60 l0 2 M37 60 l0 2 M39 60 l0 2" stroke="#7D6113" stroke-width="1.6" stroke-linecap="round"/>
+</svg>
