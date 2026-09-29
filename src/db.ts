@@ -100,9 +100,14 @@ function migrate(d: Database): void {
       k TEXT PRIMARY KEY,
       ts INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS mesh_blocked_nodes (
+      node_id TEXT PRIMARY KEY,
+      reason TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
   `);
   // mesh columns (added after the fact — idempotent)
-  for (const [table, column] of [["notes", "gid"], ["comments", "remote_gid"], ["members", "password_hash"]]) {
+  for (const [table, column] of [["notes", "gid"], ["notes", "link_origin"], ["comments", "remote_gid"], ["members", "password_hash"]]) {
     const cols = d.query(`PRAGMA table_info(${table})`).all() as any[];
     if (!cols.some((c) => c.name === column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
   }

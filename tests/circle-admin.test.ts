@@ -85,15 +85,18 @@ describe("migrate", () => {
     expect(detail.note.comments[0].body).toBe("nice one");
   });
 
-  test("non-owner cannot migrate", async () => {
+  test("non-owner gets an export bundle instead of an in-place migrate", async () => {
     const rook = await api(A_PORT, "/api/join", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: inviteCode, name: "Rook" }),
     });
-    try {
-      await api(A_PORT, "/api/circle/migrate", { method: "POST", ...auth(rook.token) });
-      expect.unreachable();
-    } catch (e: any) { expect(String(e.message)).toContain("owner"); }
+    const d = await api(A_PORT, "/api/circle/migrate", { method: "POST", ...auth(rook.token) });
+    expect(d.export).toBeTruthy();
+    expect(d.export.version).toBe(1);
+    expect(d.migratedNotes).toBeUndefined();
+    // the circle itself is untouched
+    const st = await api(A_PORT, "/api/status");
+    expect(st.hasCircle).toBe(true);
   });
 });
 

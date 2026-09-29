@@ -219,7 +219,7 @@ async function viewList(kind) {
       }
       const n = it.note;
       return `<div class="nrow" data-note="${n.id}">
-        <div class="nr-title">${esc(n.title)}</div>
+        <div class="nr-title">${n.link ? "🔗 " : ""}${esc(n.title)}</div>
         <div class="nr-sub">${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}</div></div>`;
     }).join("");
   };
@@ -385,12 +385,16 @@ function detailBodyHtml(note, related) {
     : "";
   const backHash = note.shared ? "#/list/circle" : "#/list/mine";
   const backLabel = note.shared ? state.circle.name : "My Notepad";
+  const linkBadge = note.link
+    ? '<p class="link-badge">🔗 Linked from ' + esc(note.link.name || "someone") + (note.link.circle ? " · " + esc(note.link.circle) : "") + " — frozen, read-only</p>"
+    : "";
   return '<button class="back" data-go="' + backHash + '">‹ ' + esc(backLabel) + "</button>" +
     '<h1 class="note-title">' + esc(note.title) + "</h1>" +
     '<p class="note-meta"><span class="dot" style="background:' + esc(note.author.color) + '"></span>' +
     esc(note.author.name) + " · " + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min</p>" +
+    linkBadge +
     tags + '<div class="reader">' + md(note.body) + "</div>" +
-    orbHtml(note) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
+    (note.link ? "" : orbHtml(note)) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
 }
 
 async function viewDetail(id, editing) {
@@ -566,7 +570,12 @@ async function viewMembers() {
       <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
       <p class="sub" style="margin:0 0 10px">Burning destroys the circle on this Abba — members, notes, everything. Peered instances are told to drop shared notes. This can't be undone.</p>
       <div class="btn-row"><button class="btn btn-ghost" id="circ-burn" style="color:#B0442F;border-color:#E3B7A9">Burn circle</button></div>
-    </div>` : ""}`;
+    </div>` : `
+    <p class="section-label">Your own circle</p>
+    <div class="card">
+      <p class="sub" style="margin:0 0 10px">Take your notes, your comments, and frozen links to notes shared with you — and become host of your own circle on a fresh Abba. Nothing new flows back from here afterwards.</p>
+      <div class="btn-row"><button class="btn btn-ghost" id="circ-export">Migrate to your own circle</button></div>
+    </div>`}`;
   $("#copy").onclick = async () => {
     const link = location.origin + location.pathname + "#/welcome?code=" + state.circle.inviteCode;
     try { await navigator.clipboard.writeText(link); toast("Invite link copied."); }
@@ -607,6 +616,19 @@ async function viewMembers() {
       localStorage.removeItem("abba_token");
       location.hash = "#/welcome";
       await boot(true);
+    } catch (e) { toast(e.message); }
+  };
+  const exp = $("#circ-export");
+  if (exp) exp.onclick = async () => {
+    if (!confirm("Download your migration bundle? It holds your notes, your comments, and frozen links to notes shared with you.")) return;
+    try {
+      const d = await api("/api/circle/migrate", { method: "POST" });
+      const blob = new Blob([JSON.stringify(d.export)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "abba-migrate-" + (state.me.name || "me").toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".json";
+      document.body.appendChild(a); a.click(); a.remove();
+      toast("Bundle downloaded — import it on a fresh Abba's welcome screen.");
     } catch (e) { toast(e.message); }
   };
   heartbeat("members");
@@ -705,6 +727,14 @@ async function viewWelcome() {
       <div class="btn-row"><button class="btn btn-primary" id="w-r-go">Re-open my account</button></div>
       <p class="sub" style="margin:10px 0 0">Works on this Abba, or anywhere your account reached through mesh sync.</p>
     </div>
+    ${hasCircle ? "" : `
+    <div class="card" style="text-align:left;margin-top:14px">
+      <div class="eyebrow" style="margin-top:0">Migrating from another circle?</div>
+      <p class="sub" style="margin:0 0 10px">Import your migration bundle — you become host of a fresh circle with your notes, links, and comments.</p>
+      <div class="field"><label>Your circle's name</label><input id="w-m-circle" placeholder="e.g. Ari's Circle" maxlength="60"></div>
+      <div class="field"><label>Migration bundle</label><input id="w-m-file" type="file" accept=".json,application/json"></div>
+      <div class="btn-row"><button class="btn btn-ghost" id="w-m-go">Import bundle</button></div>
+    </div>`}
     <p class="sub" style="margin-top:18px">One circle per Abba · stays intimate by design.</p>
   </div>`;
   const rl = $("#w-reopen-link");
@@ -722,6 +752,22 @@ async function viewWelcome() {
       const data = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: name.trim(), password }) });
       localStorage.setItem("abba_token", data.token);
       toast(data.fromMesh ? "Account restored from the mesh. Welcome back." : "Welcome back.");
+      location.hash = "#/folders";
+      await boot(true);
+    } catch (e) { toast(e.message); }
+  };
+  const mgo = $("#w-m-go");
+  if (mgo) mgo.onclick = async () => {
+    const f = ($("#w-m-file") || {}).files || [];
+    if (!f.length) { toast("Choose your migration bundle first."); return; }
+    try {
+      const bundle = JSON.parse(await f[0].text());
+      const circleName = (($("#w-m-circle") || {}).value || "").trim();
+      const data = await api("/api/circle/import", {
+        method: "POST", body: JSON.stringify({ bundle, circleName: circleName || undefined }),
+      });
+      localStorage.setItem("abba_token", data.token);
+      toast("Welcome home, host.");
       location.hash = "#/folders";
       await boot(true);
     } catch (e) { toast(e.message); }

@@ -119,6 +119,7 @@ function applyNoteSnapshot(db: Database, m: MeshStore, row: any): boolean {
   const gid = String(snap.gid || "");
   if (!gid) return false;
   const existing = db.query("SELECT * FROM notes WHERE gid = ?").get(gid) as any;
+  if (existing && existing.link_origin) return true; // frozen migration link — never updated
   if (snap.deleted || snap.retracted || !snap.shared) {
     if (existing) db.query("DELETE FROM notes WHERE id = ?").run(existing.id);
     return true;
@@ -180,10 +181,26 @@ export function applyMeshUpdates(m: MeshStore, db: Database): number {
   const seen = new Map<string, number>(
     (db.query("SELECT k, ts FROM mesh_seen").all() as any[]).map(r => [r.k, r.ts]),
   );
+  const blocked = new Set(
+    (db.query("SELECT node_id FROM mesh_blocked_nodes").all() as any[]).map(r => r.node_id),
+  );
+  // which node a key belongs to (abba:member: credentials are never blocked)
+  const nodeFor = (k: string): string | null => {
+    const p = k.split(":");
+    if (k.startsWith("abba:note:")) return p[2] || null;
+    if (k.startsWith("abba:react:") || k.startsWith("abba:comment:")) return p[4] || null;
+    return null;
+  };
   let changed = 0;
   for (const row of m.listKv()) {
     if (!row.k.startsWith("abba:")) continue;
     if ((seen.get(row.k) || 0) >= row.ts) continue;
+    const bn = nodeFor(row.k);
+    if (bn && blocked.has(bn)) {
+      // migrated away from this circle: its share stream stays out
+      db.query("INSERT OR REPLACE INTO mesh_seen (k, ts) VALUES (?, ?)").run(row.k, row.ts);
+      continue;
+    }
     let applied = false;
     try {
       if (row.k.startsWith("abba:note:")) applied = applyNoteSnapshot(db, m, row);

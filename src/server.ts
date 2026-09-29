@@ -8,7 +8,7 @@ import {
   publishNote, publishNoteTombstone, publishReaction, publishComment,
   publishMemberCredential, findMeshCredential,
 } from "./meshbridge";
-import { migrateCircle, burnCircle } from "./circleadmin";
+import { migrateCircle, burnCircle, exportMemberBundle, importBundle } from "./circleadmin";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
@@ -64,6 +64,7 @@ function noteJson(n: NoteRow, me: any): any {
     id: n.id, title: n.title, body: n.body, tags, status: n.status,
     shared: n.shared === 1, readMins: n.read_mins,
     mine: n.member_id === me.id,
+    link: (n as any).link_origin ? JSON.parse((n as any).link_origin) : null,
     author: { name: n.member_name || "Someone", color: n.member_color || PALETTE[0] },
     createdAt: n.created_at, updatedAt: n.updated_at,
     comments: comments.map((c) => ({ id: c.id, body: c.body, createdAt: c.created_at, mine: c.member_id === me.id, author: { name: c.member_name, color: c.member_color } })),
@@ -161,6 +162,18 @@ async function handle(req: Request): Promise<Response> {
       return json({ token, member: publicMember(member), fromMesh: true });
     }
     return fail();
+  }
+
+  // public: import a migration bundle onto a fresh instance — you become host
+  if (req.method === "POST" && path === "/api/circle/import") {
+    const exists = db.query("SELECT id FROM circle WHERE id = 1").get();
+    if (exists) return err("This Abba already has a circle.", 409);
+    const b = await body(req);
+    try {
+      const r = importBundle(db, getMesh(), b.bundle, b.circleName);
+      const member = db.query("SELECT * FROM members WHERE id = ?").get(r.memberId);
+      return json({ token: r.token, member: publicMember(member), circle: r.circle }, 201);
+    } catch (e: any) { return err(e.message || "Bad migration bundle.", 400); }
   }
 
   // public status: does a circle exist yet? (for the welcome screen)
@@ -261,10 +274,11 @@ async function handle(req: Request): Promise<Response> {
     return err("Not found.", 404);
   }
 
-  // circle admin: migrate content to a fresh circle, or burn it all down
+  // circle admin: migrate content to a fresh circle, or burn it all down.
+  // Owners restructure in place; members export a bundle to fork their own circle.
   if (req.method === "POST" && path === "/api/circle/migrate") {
-    if (me.role !== "owner") return err("Only the circle's owner can do that.", 403);
-    return json(migrateCircle(db, getMesh(), me.id));
+    if (me.role === "owner") return json(migrateCircle(db, getMesh(), me.id));
+    return json({ export: exportMemberBundle(db, getMesh(), me.id) });
   }
   if (req.method === "POST" && path === "/api/circle/burn") {
     if (me.role !== "owner") return err("Only the circle's owner can do that.", 403);
@@ -312,6 +326,13 @@ async function handle(req: Request): Promise<Response> {
       JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as unknown as NoteRow | null;
     if (!note || !noteVisible(note, me)) return err("Not found.", 404);
 
+    const isLink = !!(note as any).link_origin;
+    if (isLink) {
+      // frozen migration links: readable and removable, nothing else
+      const allowed = req.method === "GET" || (req.method === "DELETE" && sub === "");
+      if (!allowed) return err("Linked notes are read-only.", 403);
+    }
+
     if (req.method === "GET" && sub === "") return json({ note: noteJson(note, me) });
 
     if (req.method === "GET" && sub === "/related") {
@@ -327,7 +348,7 @@ async function handle(req: Request): Promise<Response> {
       return new Response(md, { headers: { "Content-Type": "text/markdown", "Content-Disposition": `attachment; filename="abba-${note.id}.md"` } });
     }
 
-    if (note.member_id !== me.id && !["/comments", "/react"].includes(sub)) return err("That's someone else's note.", 403);
+    if (note.member_id !== me.id && !isLink && !["/comments", "/react"].includes(sub)) return err("That's someone else's note.", 403);
 
     if (req.method === "PATCH" && sub === "") {
       const b = await body(req);
@@ -352,7 +373,7 @@ async function handle(req: Request): Promise<Response> {
     }
 
     if (req.method === "DELETE" && sub === "") {
-      publishNoteTombstone(getMesh(), db, noteId);
+      if (!isLink) publishNoteTombstone(getMesh(), db, noteId); // links are local-only
       db.query("DELETE FROM notes WHERE id = ?").run(noteId);
       return json({ ok: true });
     }

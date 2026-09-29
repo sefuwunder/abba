@@ -90,6 +90,21 @@ peers drop them; the tombstones persist in the local mesh KV so even a later
 re-peer converges on "deleted" instead of resurrecting notes. Type `BURN` to
 confirm. There is no undo.
 
+## Forking as a non-host (migrate to your own circle)
+
+Any member can **Migrate to your own circle** — instead of restructuring in
+place (owner behavior), they download a migration bundle: their notes (private
+and shared, with reactions and comment threads), frozen links to notes that
+were shared with them, and their password-hash credential. Importing the bundle
+on a fresh Abba (`POST /api/circle/import`, or the welcome screen's import
+card) starts a brand-new circle with them as **host**.
+
+- Linked notes are read-only — visible, removable, but never editable, reactable,
+  or commentable. Deleting one removes only the local link.
+- Links never update: the origin circle's node is blocklisted
+  (`mesh_blocked_nodes`), so no new shared notes flow in from prior circles —
+  even if the instances later peer.
+
 ## Account secrets (re-open with a password)
 
 Bearer tokens live in the browser — lose the browser data and the account is

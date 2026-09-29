@@ -12,7 +12,7 @@ import type { MeshStore } from "./mesh/store";
 import {
   gidFor, remoteMember, publishNote, publishReaction, publishComment,
 } from "./meshbridge";
-import { nowIso, randomInviteCode } from "./db";
+import { nowIso, randomToken, randomInviteCode } from "./db";
 
 function tombstone(mesh: MeshStore, db: Database, noteId: number): void {
   const n = db.query("SELECT gid, shared FROM notes WHERE id = ?").get(noteId) as any;
@@ -128,4 +128,121 @@ export function burnCircle(db: Database, mesh: MeshStore): void {
     db.query(`DELETE FROM ${t}`).run();
   }
   db.query("DELETE FROM circle").run();
+}
+
+// ---- member migration: fork to your own circle --------------------------------
+// A non-host keeps their data, becomes host of a fresh circle, and carries
+// frozen links to notes that were shared with them (plus their comments).
+// The origin circle's node is blocklisted, so no new shared notes flow in
+// afterwards — even if the instances later peer.
+
+export function exportMemberBundle(db: Database, mesh: MeshStore, memberId: number): any {
+  const me = db.query("SELECT * FROM members WHERE id = ?").get(memberId) as any;
+  if (!me) throw new Error("No such member.");
+  const notes = db.query("SELECT * FROM notes WHERE member_id = ? AND link_origin IS NULL ORDER BY id ASC").all(memberId) as any[];
+  const bundleNotes = notes.map((n) => ({
+    title: n.title, body: n.body, tags: JSON.parse(n.tags || "[]"), status: n.status,
+    shared: n.shared === 1, readMins: n.read_mins, createdAt: n.created_at, updatedAt: n.updated_at,
+    reactions: db.query(`SELECT r.kind, r.created_at, m.name AS by_name, m.color AS by_color FROM reactions r
+      JOIN members m ON m.id = r.member_id WHERE r.note_id = ?`).all(n.id),
+    comments: db.query(`SELECT c.body, c.created_at, m.name AS by_name, m.color AS by_color FROM comments c
+      JOIN members m ON m.id = c.member_id WHERE c.note_id = ? ORDER BY c.id ASC`).all(n.id),
+  }));
+  // frozen links: shared notes by others that were visible to me
+  const shared = db.query(`SELECT n.*, m.name AS author_name, m.color AS author_color FROM notes n
+    JOIN members m ON m.id = n.member_id
+    WHERE n.shared = 1 AND n.member_id != ? AND n.link_origin IS NULL`).all(memberId) as any[];
+  const links = shared.map((n) => ({
+    gid: n.gid || null,
+    title: n.title, body: n.body, tags: JSON.parse(n.tags || "[]"), status: n.status,
+    readMins: n.read_mins, createdAt: n.created_at, updatedAt: n.updated_at,
+    author: { name: n.author_name, color: n.author_color },
+    originNode: n.gid ? String(n.gid).split(":")[0] : mesh.identity.id,
+    reactions: db.query(`SELECT r.kind, r.created_at, m.name AS by_name, m.color AS by_color FROM reactions r
+      JOIN members m ON m.id = r.member_id WHERE r.note_id = ?`).all(n.id),
+    comments: db.query(`SELECT c.body, c.created_at, m.name AS by_name, m.color AS by_color FROM comments c
+      JOIN members m ON m.id = c.member_id WHERE c.note_id = ? ORDER BY c.id ASC`).all(n.id),
+  }));
+  const circle = db.query("SELECT name FROM circle WHERE id = 1").get() as any;
+  return {
+    version: 1, exportedAt: nowIso(),
+    origin: { nodeId: mesh.identity.id, circleName: circle?.name || "a circle" },
+    profile: { name: me.name, color: me.color, passwordHash: me.password_hash || null },
+    notes: bundleNotes, links,
+  };
+}
+
+export function importBundle(db: Database, mesh: MeshStore, bundle: any, circleName?: string): {
+  token: string; memberId: number; circle: { name: string; inviteCode: string };
+} {
+  if (!bundle || bundle.version !== 1 || !bundle.profile || !String(bundle.profile.name || "").trim()) {
+    throw new Error("Bad migration bundle.");
+  }
+  const name = String(bundle.profile.name).slice(0, 40);
+  const color = String(bundle.profile.color || "#C0765A");
+  const cname = String(circleName || `${name}'s Circle`).slice(0, 60);
+  const code = randomInviteCode();
+  db.query("INSERT INTO circle (id, name, invite_code, created_at) VALUES (1, ?, ?, ?)")
+    .run(cname, code, nowIso());
+  const token = randomToken("abba_");
+  const res = db.query(
+    "INSERT INTO members (name, color, token, role, created_at, last_seen, password_hash) VALUES (?, ?, ?, 'owner', ?, ?, ?)",
+  ).run(name, color, token, nowIso(), nowIso(), bundle.profile.passwordHash || null);
+  const ownerId = Number(res.lastInsertRowid);
+
+  // cut the old circle's share stream: its future notes stay out, links stay frozen
+  const originNode = bundle.origin?.nodeId;
+  if (originNode && originNode !== mesh.identity.id) {
+    db.query("INSERT OR IGNORE INTO mesh_blocked_nodes (node_id, reason, created_at) VALUES (?, ?, ?)")
+      .run(originNode, "migrated from " + (bundle.origin.circleName || "a circle"), nowIso());
+  }
+
+  const shadowFor = (bname: string, bcolor: string): number => {
+    const t = db.query("SELECT id FROM members WHERE token = ?").get(`migrated:import:${bname}`) as any;
+    if (t) return t.id;
+    const r = db.query(
+      "INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'migrated', ?, '')",
+    ).run(String(bname).slice(0, 40) || "Someone", bcolor || "#A08C5B", `migrated:import:${bname}`, nowIso());
+    return Number(r.lastInsertRowid);
+  };
+  const insertNote = db.query(`INSERT INTO notes
+    (member_id, title, body, tags, status, shared, read_mins, created_at, updated_at, gid, link_origin)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const insertReaction = db.query("INSERT OR IGNORE INTO reactions (note_id, member_id, kind, created_at) VALUES (?, ?, ?, ?)");
+  const insertComment = db.query("INSERT INTO comments (note_id, member_id, body, created_at) VALUES (?, ?, ?, ?)");
+
+  // my notes — I own them here now
+  for (const n of bundle.notes || []) {
+    const r = insertNote.run(ownerId, n.title || "", n.body || "", JSON.stringify(n.tags || []),
+      n.status || "seed", n.shared ? 1 : 0, n.readMins || 1,
+      n.createdAt || nowIso(), n.updatedAt || nowIso(), null, null);
+    const nid = Number(r.lastInsertRowid);
+    for (const rc of n.reactions || []) {
+      const byId = rc.by_name === name ? ownerId : shadowFor(rc.by_name, rc.by_color);
+      insertReaction.run(nid, byId, rc.kind, rc.createdAt || nowIso());
+    }
+    for (const c of n.comments || []) {
+      const byId = c.by_name === name ? ownerId : shadowFor(c.by_name, c.by_color);
+      insertComment.run(nid, byId, c.body || "", c.createdAt || nowIso());
+    }
+    if (n.shared) publishNote(mesh, db, nid);
+  }
+  // frozen links to notes that were shared with me
+  for (const l of bundle.links || []) {
+    const author = remoteMember(db, l.originNode || "import", l.author?.name || "Someone", l.author?.color);
+    const r = insertNote.run(author.id, l.title || "", l.body || "", JSON.stringify(l.tags || []),
+      l.status || "seed", 1, l.readMins || 1, l.createdAt || nowIso(), l.updatedAt || nowIso(),
+      l.gid || null,
+      JSON.stringify({ name: l.author?.name || "Someone", circle: bundle.origin?.circleName || "a circle", gid: l.gid || null }));
+    const nid = Number(r.lastInsertRowid);
+    for (const rc of l.reactions || []) {
+      const byId = rc.by_name === name ? ownerId : shadowFor(rc.by_name, rc.by_color);
+      insertReaction.run(nid, byId, rc.kind, rc.createdAt || nowIso());
+    }
+    for (const c of l.comments || []) {
+      const byId = c.by_name === name ? ownerId : shadowFor(c.by_name, c.by_color);
+      insertComment.run(nid, byId, c.body || "", c.createdAt || nowIso());
+    }
+  }
+  return { token, memberId: ownerId, circle: { name: cname, inviteCode: code } };
 }
