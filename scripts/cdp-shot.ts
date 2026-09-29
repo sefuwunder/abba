@@ -9,7 +9,7 @@ const html = readFileSync(htmlFile, "utf8");
 const dataUrl = "data:text/html," + encodeURIComponent(html);
 
 // launch chromium with remote debugging
-const proc = Bun.spawn(["/opt/meta-chromium/chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=9222", "--user-data-dir=/tmp/sefu-cdp-profile"],
+const proc = Bun.spawn(["/opt/meta-chromium/chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=9222", "--user-data-dir=/tmp/abba-cdp-profile"],
   { stdout: "ignore", stderr: "ignore" });
 await new Promise((r) => setTimeout(r, 1500));
 

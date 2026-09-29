@@ -1,5 +1,5 @@
 {
-  "name": "sefu",
+  "name": "abba",
   "version": "1.0.0",
   "description": "A quiet markdown notepad for an executive and their intimate circle.",
   "scripts": { "start": "bun src/server.ts", "test": "bun test" }

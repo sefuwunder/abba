@@ -49,7 +49,7 @@ const note5 = {
 const CANNED: Record<string, any> = {
   "/api/status": { hasCircle: true },
   "/api/me": { member: ME },
-  "/api/circle": { name: "The Corner Table", inviteCode: "sefu-7k2qx9", memberCap: 12 },
+  "/api/circle": { name: "The Corner Table", inviteCode: "abba-7k2qx9", memberCap: 12 },
   "/api/members": { members: [ME, ARI, JUNE] },
   "/api/presence": { here: [ARI, JUNE] },
   "/api/nudges": { nudges: [{ key: "stale-3", text: "\u201cKill the newsletter?\u201d has been sprouting for a while \u2014 still alive, or time to let it rest?", noteId: 3, action: "rest" }] },
@@ -95,7 +95,7 @@ window.fetch = function(url, opts) {
   var hit = __CANNED[u];
   return Promise.resolve({ ok: !!hit, status: hit ? 200 : 404, json: function() { return Promise.resolve(hit || { error: "not found" }); } });
 };
-${which === "welcome" ? "" : 'localStorage.setItem("sefu_token", "demo");'}
+${which === "welcome" ? "" : 'localStorage.setItem("abba_token", "demo");'}
 `;
 
 let html = readFileSync("public/index.html", "utf8");
@@ -114,5 +114,5 @@ const POST: Record<string, string> = {
   members: `<script>setTimeout(function(){ viewMembers(); }, 400);</script>`,
 };
 html = html.replace("</body>", (POST[which] || "") + "</body>");
-writeFileSync("/tmp/sefu-inline-" + which + ".html", html);
+writeFileSync("/tmp/abba-inline-" + which + ".html", html);
 console.log("wrote", html.length, "bytes for", which);

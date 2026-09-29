@@ -1,4 +1,4 @@
-// mind.ts — Sefu's quiet intelligence.
+// mind.ts — Abba's quiet intelligence.
 //
 // This module is the "agent" in "agent-native", and it is deliberately
 // invisible: it never announces itself, never shows a spinner with a label,

@@ -1,4 +1,4 @@
-// db.ts — SQLite schema and data-dir bootstrap for Sefu.
+// db.ts — SQLite schema and data-dir bootstrap for Abba.
 import { Database } from "bun:sqlite";
 import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -9,9 +9,9 @@ let dataDir = "";
 export function dataDirPath(): string { return dataDir; }
 
 export function initDataDir(dir?: string): Database {
-  dataDir = dir || process.env.SEFU_DATA || join(import.meta.dir, "..", "data");
+  dataDir = dir || process.env.ABBA_DATA || join(import.meta.dir, "..", "data");
   mkdirSync(dataDir, { recursive: true });
-  db = new Database(join(dataDir, "sefu.db"));
+  db = new Database(join(dataDir, "abba.db"));
   db.exec("PRAGMA journal_mode=WAL;");
   migrate(db);
   return db;
@@ -112,5 +112,5 @@ export function randomToken(prefix = ""): string {
 export function randomInviteCode(): string {
   const bytes = new Uint8Array(4);
   crypto.getRandomValues(bytes);
-  return "sefu-" + Buffer.from(bytes).toString("base64url").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
+  return "abba-" + Buffer.from(bytes).toString("base64url").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
 }

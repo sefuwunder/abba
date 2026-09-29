@@ -4,7 +4,7 @@ const [htmlFile] = process.argv.slice(2);
 const html = readFileSync(htmlFile, "utf8");
 const dataUrl = "data:text/html," + encodeURIComponent(html);
 
-const proc = Bun.spawn(["/opt/meta-chromium/chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=9223", "--user-data-dir=/tmp/sefu-cdp-dbg"],
+const proc = Bun.spawn(["/opt/meta-chromium/chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=9223", "--user-data-dir=/tmp/abba-cdp-dbg"],
   { stdout: "ignore", stderr: "ignore" });
 await new Promise((r) => setTimeout(r, 2500));
 const target: any = await (await fetch("http://localhost:9223/json/new", { method: "PUT", body: "{}" })).json();

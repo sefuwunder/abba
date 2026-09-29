@@ -1,4 +1,4 @@
-# Sefu — a quiet notepad for you and your circle
+# Abba — a quiet notepad for you and your circle
 
 A markdown notepad for an executive, built on the **S.E.F.U. software philosophy**:
 
@@ -7,7 +7,7 @@ A markdown notepad for an executive, built on the **S.E.F.U. software philosophy
 - **Flow** (consistency) — capture in seconds, drafts auto-save, markdown with zero friction.
 - **Unity** (togetherness) — one intimate circle (capped at 12), shared ideas, warm reactions, a weekly letter.
 
-**Agent-native, agent invisible.** Sefu has an intelligence layer (`src/mind.ts`) that auto-titles notes, finds related ideas, composes the weekly digest, and surfaces kind nudges. It never announces itself — no chat widget, no "AI" labels, no sparkle icons. Everything appears as ordinary, calm interface. See `PHILOSOPHY.md`.
+**Agent-native, agent invisible.** Abba has an intelligence layer (`src/mind.ts`) that auto-titles notes, finds related ideas, composes the weekly digest, and surfaces kind nudges. It never announces itself — no chat widget, no "AI" labels, no sparkle icons. Everything appears as ordinary, calm interface. See `PHILOSOPHY.md`.
 
 ## Run
 
@@ -15,7 +15,7 @@ Bun + zero dependencies + SQLite. Port 3013.
 
 ```bash
 bun src/server.ts
-# env: SEFU_PORT=3013  SEFU_DATA=./data
+# env: ABBA_PORT=3013  ABBA_DATA=./data
 ```
 
 Open `http://localhost:3013` — start a circle (you're the owner), share the invite code, and your circle joins by name. No passwords; the circle is intimate by design.
@@ -48,5 +48,5 @@ bun test   # 36 tests: full circle lifecycle over real HTTP
 
 ## Notes
 
-- One circle per Sefu instance. Data lives in `./data/sefu.db` (gitignored).
+- One circle per Abba instance. Data lives in `./data/abba.db` (gitignored).
 - Reduced-motion supported. Muted terracotta palette; nothing shouts.

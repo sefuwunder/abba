@@ -22,10 +22,10 @@ const post = (p: string, body: any, tok = "") => api(p, { method: "POST", body: 
 const patch = (p: string, body: any, tok = "") => api(p, { method: "PATCH", body: JSON.stringify(body) }, tok);
 
 beforeAll(async () => {
-  const dir = mkdtempSync(join(tmpdir(), "sefu-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "abba-test-"));
   proc = Bun.spawn(["bun", "src/server.ts"], {
     cwd: join(import.meta.dir, ".."),
-    env: { ...process.env, SEFU_DATA: dir, SEFU_PORT: String(PORT) },
+    env: { ...process.env, ABBA_DATA: dir, ABBA_PORT: String(PORT) },
     stdout: "ignore", stderr: "ignore",
   });
   const deadline = Date.now() + 8000;
@@ -48,9 +48,9 @@ describe("circle bootstrap", () => {
   test("init creates circle + owner", async () => {
     const { status, data } = await post("/api/circle/init", { name: "Test Circle", ownerName: "Sam" });
     expect(status).toBe(200);
-    expect(data.token).toMatch(/^sefu_/);
+    expect(data.token).toMatch(/^abba_/);
     expect(data.member.role).toBe("owner");
-    expect(data.circle.inviteCode).toMatch(/^sefu-/);
+    expect(data.circle.inviteCode).toMatch(/^abba-/);
     ownerTok = data.token; inviteCode = data.circle.inviteCode;
   });
   test("init twice is refused", async () => {
@@ -58,7 +58,7 @@ describe("circle bootstrap", () => {
     expect(status).toBe(409);
   });
   test("join with wrong code fails", async () => {
-    const { status } = await post("/api/join", { code: "sefu-nope", name: "Ari" });
+    const { status } = await post("/api/join", { code: "abba-nope", name: "Ari" });
     expect(status).toBe(403);
   });
   test("join with code works", async () => {

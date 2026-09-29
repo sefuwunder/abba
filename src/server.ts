@@ -1,10 +1,10 @@
-// server.ts — Sefu: a quiet markdown notepad for an executive and their circle.
+// server.ts — Abba: a quiet markdown notepad for an executive and their circle.
 // Bun + zero dependencies + SQLite. Port 3013.
 import { Database } from "bun:sqlite";
 import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, __setDbForTests } from "./db";
 import { autoTitle, readMins, relatedIdeas, composeDigest, nudgesFor, dismissNudge, type NoteRow } from "./mind";
 
-const PORT = Number(process.env.SEFU_PORT || 3013);
+const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
 const STATUSES = ["seed", "sprout", "motion", "decided", "resting"] as const;
 const REACTIONS = ["felt", "spark", "yes"] as const; // ❤ felt this · 💡 sparked · 🙌 yes
@@ -79,14 +79,14 @@ async function handle(req: Request): Promise<Response> {
   // bootstrap: create the circle (only when none exists)
   if (req.method === "POST" && path === "/api/circle/init") {
     const exists = db.query("SELECT id FROM circle WHERE id = 1").get();
-    if (exists) return err("This Sefu already has a circle.", 409);
+    if (exists) return err("This Abba already has a circle.", 409);
     const b = await body(req);
     const name = String(b.name || "The Circle").slice(0, 60);
     const ownerName = String(b.ownerName || "You").slice(0, 40);
     const code = randomInviteCode();
     db.query("INSERT INTO circle (id, name, invite_code, created_at) VALUES (1, ?, ?, ?)")
       .run(name, code, nowIso());
-    const token = randomToken("sefu_");
+    const token = randomToken("abba_");
     const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'owner', ?, ?)")
       .run(ownerName, PALETTE[0], token, nowIso(), nowIso());
     const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
@@ -103,7 +103,7 @@ async function handle(req: Request): Promise<Response> {
     if (count >= circle.member_cap) return err("The circle is full — it stays intimate by design.", 403);
     const name = String(b.name || "").trim().slice(0, 40);
     if (!name) return err("Tell us your name so the circle knows who's here.", 400);
-    const token = randomToken("sefu_");
+    const token = randomToken("abba_");
     const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'member', ?, ?)")
       .run(name, PALETTE[count % PALETTE.length], token, nowIso(), nowIso());
     const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
@@ -188,7 +188,7 @@ async function handle(req: Request): Promise<Response> {
 
     if (req.method === "GET" && sub === "/export") {
       const md = `# ${note.title}\n\n${note.body}\n\n---\n*${note.member_name} · ${note.created_at.slice(0, 10)} · ${note.status}*\n`;
-      return new Response(md, { headers: { "Content-Type": "text/markdown", "Content-Disposition": `attachment; filename="sefu-${note.id}.md"` } });
+      return new Response(md, { headers: { "Content-Type": "text/markdown", "Content-Disposition": `attachment; filename="abba-${note.id}.md"` } });
     }
 
     if (note.member_id !== me.id && !["/comments", "/react"].includes(sub)) return err("That's someone else's note.", 403);
@@ -279,5 +279,5 @@ export function __resetForTests(d: Database): void { __setDbForTests(d); }
 
 if (import.meta.main) {
   Bun.serve({ port: PORT, fetch: handle });
-  console.log(`Sefu listening on http://localhost:${PORT}`);
+  console.log(`Abba listening on http://localhost:${PORT}`);
 }

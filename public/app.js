@@ -1,4 +1,4 @@
-/* Sefu client — a quiet notepad. No AI branding anywhere, by design:
+/* Abba client — a quiet notepad. No AI branding anywhere, by design:
    auto-titles, related ideas, the digest and nudges are rendered as plain
    interface. The intelligence stays invisible. */
 "use strict";
@@ -46,7 +46,7 @@ function md(src) {
 async function api(path, opts) {
   opts = opts || {};
   const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
-  const tok = localStorage.getItem("sefu_token");
+  const tok = localStorage.getItem("abba_token");
   if (tok) headers["Authorization"] = "Bearer " + tok;
   const res = await fetch(path, Object.assign({}, opts, { headers }));
   const data = await res.json().catch(() => ({}));
@@ -127,7 +127,7 @@ async function viewWelcome() {
   const hasCircle = await api("/api/status").then(d => d.hasCircle).catch(() => false);
   app.innerHTML = `<div class="welcome">
     <div class="mark">◯</div>
-    <h1>Sefu</h1>
+    <h1>Abba</h1>
     <p class="tagline">A quiet notepad for you and your circle.</p>
     <div class="creed">
       <div><b>Soulfulness</b> — written for humans, not feeds</div>
@@ -139,10 +139,10 @@ async function viewWelcome() {
       <div class="eyebrow" style="margin-top:0">Begin</div>
       ${hasCircle ? "" : `<div class="field"><label>Your circle's name</label><input id="w-circle" placeholder="e.g. The Founders Table" maxlength="60"></div>`}
       <div class="field"><label>Your name</label><input id="w-name" placeholder="What should the circle call you?" maxlength="40"></div>
-      ${hasCircle ? `<div class="field"><label>Invite code</label><input id="w-code" placeholder="sefu-…" autocomplete="off"></div>` : ""}
+      ${hasCircle ? `<div class="field"><label>Invite code</label><input id="w-code" placeholder="abba-…" autocomplete="off"></div>` : ""}
       <div class="btn-row"><button class="btn btn-primary" id="w-go">${hasCircle ? "Join the circle" : "Start our circle"}</button></div>
     </div>
-    <p class="sub" style="margin-top:18px">One circle per Sefu · stays intimate by design.</p>
+    <p class="sub" style="margin-top:18px">One circle per Abba · stays intimate by design.</p>
   </div>`;
   $("#w-go").onclick = async () => {
     const name = ($("#w-name") || {}).value || "";
@@ -151,7 +151,7 @@ async function viewWelcome() {
       const data = hasCircle
         ? await api("/api/join", { method: "POST", body: JSON.stringify({ code: $("#w-code").value.trim(), name: name.trim() }) })
         : await api("/api/circle/init", { method: "POST", body: JSON.stringify({ name: ($("#w-circle") || {}).value || "The Circle", ownerName: name.trim() }) });
-      localStorage.setItem("sefu_token", data.token);
+      localStorage.setItem("abba_token", data.token);
       location.hash = "#/capture";
       await boot(true);
     } catch (e) { toast(e.message); }
@@ -165,7 +165,7 @@ async function viewCapture() {
     api("/api/notes?scope=mine").then(d => d.notes).catch(() => []),
   ]);
   state.nudges = nudges; state.notes = notes;
-  const draft = localStorage.getItem("sefu_draft") || "";
+  const draft = localStorage.getItem("abba_draft") || "";
   app.innerHTML = `
     <p class="eyebrow">${new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</p>
     <h2 class="greeting">${greeting()}, ${esc(state.me.name.split(" ")[0])}.</h2>
@@ -193,8 +193,8 @@ async function viewCapture() {
     fit();
     clearTimeout(t);
     t = setTimeout(() => {
-      if (cap.value.trim()) { localStorage.setItem("sefu_draft", cap.value); hint.textContent = "saved"; }
-      else { localStorage.removeItem("sefu_draft"); hint.textContent = ""; }
+      if (cap.value.trim()) { localStorage.setItem("abba_draft", cap.value); hint.textContent = "saved"; }
+      else { localStorage.removeItem("abba_draft"); hint.textContent = ""; }
     }, 600);
   });
   $("#keep").onclick = async () => {
@@ -202,7 +202,7 @@ async function viewCapture() {
     if (!bodyText) { toast("Write something first — even a fragment."); return; }
     try {
       await api("/api/notes", { method: "POST", body: JSON.stringify({ body: bodyText }) });
-      localStorage.removeItem("sefu_draft");
+      localStorage.removeItem("abba_draft");
       toast("Kept. It's in your notepad.");
       await viewCapture();
     } catch (e) { toast(e.message); }
@@ -390,13 +390,13 @@ async function viewIdea(id, editing) {
   const ed = $("#edit"); if (ed) ed.onclick = () => viewIdea(id, true);
   $("#dl").onclick = async () => {
     try {
-      const tok = localStorage.getItem("sefu_token");
+      const tok = localStorage.getItem("abba_token");
       const res = await fetch("/api/notes/" + id + "/export", { headers: { Authorization: "Bearer " + tok } });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "sefu-" + id + ".md";
+      a.download = "abba-" + id + ".md";
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     } catch (e) { toast(e.message); }
@@ -479,7 +479,7 @@ function heartbeat(view) {
 
 /* ---------- boot & router ---------- */
 async function boot(force) {
-  const tok = localStorage.getItem("sefu_token");
+  const tok = localStorage.getItem("abba_token");
   if (!tok) { viewWelcome(); return; }
   try {
     const [me, circle] = await Promise.all([
@@ -488,7 +488,7 @@ async function boot(force) {
     ]);
     state.me = me; state.circle = circle;
     route();
-  } catch (e) { localStorage.removeItem("sefu_token"); viewWelcome(); }
+  } catch (e) { localStorage.removeItem("abba_token"); viewWelcome(); }
 }
 function route() {
   const h = location.hash || "#/capture";
