@@ -45,7 +45,14 @@ function migrate(d: Database): void {
       token TEXT NOT NULL UNIQUE,
       role TEXT NOT NULL DEFAULT 'member',
       created_at TEXT NOT NULL,
-      last_seen TEXT NOT NULL DEFAULT ''
+      last_seen TEXT NOT NULL DEFAULT '',
+      user_id TEXT
+    );
+    CREATE TABLE IF NOT EXISTS invited_users (
+      user_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS notes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,10 +115,11 @@ function migrate(d: Database): void {
     );
   `);
   // mesh columns (added after the fact — idempotent)
-  for (const [table, column] of [["notes", "gid"], ["notes", "link_origin"], ["comments", "remote_gid"], ["members", "password_hash"], ["circle", "invite_expires_at"]]) {
+  for (const [table, column] of [["notes", "gid"], ["notes", "link_origin"], ["comments", "remote_gid"], ["members", "password_hash"], ["circle", "invite_expires_at"], ["members", "user_id"]]) {
     const cols = d.query(`PRAGMA table_info(${table})`).all() as any[];
     if (!cols.some((c) => c.name === column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
   }
+  d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_members_user_id ON members(user_id)");
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_gid ON notes(gid)");
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_rgid ON comments(remote_gid)");
 }
@@ -130,6 +138,17 @@ export function randomInviteCode(): string {
   const bytes = new Uint8Array(4);
   crypto.getRandomValues(bytes);
   return "abba-" + Buffer.from(bytes).toString("base64url").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
+}
+
+// Unique, unguessable user IDs (usr-…). Shown in Account; owners can add
+// specific users to the circle by ID instead of sharing the invite code.
+export function randomUserId(): string {
+  const bytes = new Uint8Array(15);
+  crypto.getRandomValues(bytes);
+  return "usr-" + Buffer.from(bytes).toString("base64url");
+}
+export function isUserId(s: string): boolean {
+  return /^usr-[A-Za-z0-9_-]{16,}$/.test(String(s || "").trim());
 }
 
 // Circle invite codes expire after 7 days and are honored mesh-wide:

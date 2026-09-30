@@ -658,6 +658,17 @@ async function viewMembers() {
     </div>
     <p class="section-label">Mesh sync</p>
     <div class="card" id="mesh-card"><p class="sub" id="mesh-loading">Checking the mesh…</p></div>
+    ${isOwner ? `
+    <p class="section-label">Invite specific people</p>
+    <div class="card">
+      <p class="sub" style="margin:0 0 10px">Add someone by their user ID — they join with it instead of the shared code. One use each, good for 7 days.</p>
+      <div class="btn-row">
+        <input id="tinv-uid" placeholder="usr-…" style="flex:1;min-width:0" autocomplete="off">
+        <input id="tinv-name" placeholder="Their name" style="flex:1;min-width:0" maxlength="40">
+        <button class="btn btn-primary" id="tinv-add">Add</button>
+      </div>
+      <div id="tinv-list" style="margin-top:10px"><p class="sub">Loading…</p></div>
+    </div>` : ""}
     <p class="section-label">Account</p>
     <div class="card">
       <p class="sub" style="margin:0 0 10px">${state.me.hasPassword
@@ -669,6 +680,12 @@ async function viewMembers() {
       </div>
       <div class="btn-row" id="install-row" style="display:none;margin-top:10px">
         <button class="btn btn-ghost" id="acc-install">Install Abba on this device</button>
+      </div>
+      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
+      <p class="sub" style="margin:0 0 6px">Your user ID — share it with a circle owner to be added directly, no invite code needed.</p>
+      <div class="btn-row">
+        <div class="code" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(state.me.userId || "…")}</div>
+        <button class="btn btn-ghost" id="uid-copy">Copy</button>
       </div>
     </div>
     ${isOwner ? `
@@ -725,6 +742,42 @@ async function viewMembers() {
     if (row) row.style.display = "none";
     p.prompt();
     try { await p.userChoice; } catch {}
+  };
+  const uidCopy = $("#uid-copy");
+  if (uidCopy) uidCopy.onclick = async () => {
+    try { await navigator.clipboard.writeText(state.me.userId || ""); toast("User ID copied."); }
+    catch { prompt("Copy your user ID:", state.me.userId || ""); }
+  };
+  // targeted invites (owner): add specific users by their user ID
+  const tinvList = $("#tinv-list");
+  const renderInvites = async () => {
+    if (!tinvList) return;
+    try {
+      const d = await api("/api/circle/invites");
+      tinvList.innerHTML = d.invites.length ? d.invites.map(iv => {
+        const left = Math.max(0, Date.parse(iv.expires_at) - Date.now());
+        const days = Math.ceil(left / 86400000);
+        return `<div class="mrow"><div class="mrow-main"><div class="mrow-name">${esc(iv.name || "Someone")}</div>
+          <div class="mrow-sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(iv.user_id)} · ${days} day${days === 1 ? "" : "s"} left</div></div>
+          <button class="btn btn-quiet" data-uninvite="${esc(iv.user_id)}">Revoke</button></div>`;
+      }).join("") : `<p class="sub">No pending invites.</p>`;
+      tinvList.querySelectorAll("[data-uninvite]").forEach(b => b.onclick = async () => {
+        await api("/api/circle/invites/" + encodeURIComponent(b.dataset.uninvite), { method: "DELETE" });
+        toast("Invite revoked."); renderInvites();
+      });
+    } catch (e) { tinvList.innerHTML = `<p class="sub">Couldn't load invites.</p>`; }
+  };
+  renderInvites();
+  const tinvAdd = $("#tinv-add");
+  if (tinvAdd) tinvAdd.onclick = async () => {
+    const userId = ($("#tinv-uid") || {}).value || "";
+    const name = (($("#tinv-name") || {}).value || "").trim();
+    try {
+      await api("/api/circle/invites", { method: "POST", body: JSON.stringify({ userId: userId.trim(), name }) });
+      $("#tinv-uid").value = ""; $("#tinv-name").value = "";
+      toast(name ? `${name} can now join with their user ID.` : "User added — they can join with their user ID.");
+      renderInvites();
+    } catch (e) { toast(e.message); }
   };
   const mig = $("#circ-migrate");
   if (mig) mig.onclick = async () => {
@@ -868,7 +921,7 @@ async function viewWelcome() {
       <div class="eyebrow" style="margin-top:0">Begin</div>
       ${hasCircle ? "" : `<div class="field"><label>Your circle's name</label><input id="w-circle" placeholder="e.g. The Corner Table" maxlength="60"></div>`}
       <div class="field"><label>Your name</label><input id="w-name" placeholder="What should the circle call you?" maxlength="40"></div>
-      ${hasCircle ? `<div class="field"><label>Invite code</label><input id="w-code" placeholder="abba-…" autocomplete="off"></div>` : ""}
+      ${hasCircle ? `<div class="field"><label>Invite code or user ID</label><input id="w-code" placeholder="abba-… or usr-…" autocomplete="off"></div>` : ""}
       <div class="btn-row"><button class="btn btn-primary" id="w-go">${hasCircle ? "Join the circle" : "Start our circle"}</button></div>
     </div>
     ${hasCircle ? `<p class="sub" style="margin-top:14px"><a href="#" id="w-reopen-link" style="color:var(--terra-deep)">Lost your sign-in? Re-open with a secret</a></p>` : ""}
@@ -975,8 +1028,12 @@ async function viewWelcome() {
     const name = ($("#w-name") || {}).value || "";
     if (!name.trim()) { toast("Tell us your name first."); return; }
     try {
+      const wCode = (($("#w-code") || {}).value || "").trim();
+      const joinBody = wCode.startsWith("usr-")
+        ? { userId: wCode, name: name.trim() }
+        : { code: wCode, name: name.trim() };
       const data = hasCircle
-        ? await api("/api/join", { method: "POST", body: JSON.stringify({ code: $("#w-code").value.trim(), name: name.trim() }) })
+        ? await api("/api/join", { method: "POST", body: JSON.stringify(joinBody) })
         : await api("/api/circle/init", { method: "POST", body: JSON.stringify({ name: ($("#w-circle") || {}).value || "The Circle", ownerName: name.trim() }) });
       localStorage.setItem("abba_token", data.token);
       location.hash = "#/folders";

@@ -13,7 +13,7 @@ import {
   gidFor, remoteMember, publishNote, publishReaction, publishComment, resetMeshNode,
   publishCircleInvite,
 } from "./meshbridge";
-import { nowIso, randomToken, randomInviteCode, inviteExpiryIso } from "./db";
+import { nowIso, randomToken, randomInviteCode, inviteExpiryIso, randomUserId } from "./db";
 
 function tombstone(mesh: MeshStore, db: Database, noteId: number): void {
   const n = db.query("SELECT gid, shared FROM notes WHERE id = ?").get(noteId) as any;
@@ -29,8 +29,8 @@ function ensureMigratedMember(db: Database, oldId: number, name: string, color: 
   let r = db.query("SELECT * FROM members WHERE token = ?").get(token) as any;
   if (!r) {
     const res = db.query(
-      "INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'migrated', ?, '')",
-    ).run(String(name).slice(0, 40) || "Someone", color || "#A08C5B", token, nowIso());
+      "INSERT INTO members (name, color, token, role, created_at, last_seen, user_id) VALUES (?, ?, ?, 'migrated', ?, '', ?)",
+    ).run(String(name).slice(0, 40) || "Someone", color || "#A08C5B", token, nowIso(), randomUserId());
     r = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
   }
   return r;
@@ -201,8 +201,8 @@ export function importBundle(db: Database, mesh: MeshStore, bundle: any, circleN
     .run(cname, code, inviteExpiryIso(), nowIso());
   const token = randomToken("abba_");
   const res = db.query(
-    "INSERT INTO members (name, color, token, role, created_at, last_seen, password_hash) VALUES (?, ?, ?, 'owner', ?, ?, ?)",
-  ).run(name, color, token, nowIso(), nowIso(), bundle.profile.passwordHash || null);
+    "INSERT INTO members (name, color, token, role, created_at, last_seen, user_id, password_hash) VALUES (?, ?, ?, 'owner', ?, ?, ?, ?)",
+  ).run(name, color, token, nowIso(), nowIso(), randomUserId(), bundle.profile.passwordHash || null);
   const ownerId = Number(res.lastInsertRowid);
 
   // cut the old circle's share stream: its future notes stay out, links stay frozen
@@ -216,8 +216,8 @@ export function importBundle(db: Database, mesh: MeshStore, bundle: any, circleN
     const t = db.query("SELECT id FROM members WHERE token = ?").get(`migrated:import:${bname}`) as any;
     if (t) return t.id;
     const r = db.query(
-      "INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'migrated', ?, '')",
-    ).run(String(bname).slice(0, 40) || "Someone", bcolor || "#A08C5B", `migrated:import:${bname}`, nowIso());
+      "INSERT INTO members (name, color, token, role, created_at, last_seen, user_id) VALUES (?, ?, ?, 'migrated', ?, '', ?)",
+    ).run(String(bname).slice(0, 40) || "Someone", bcolor || "#A08C5B", `migrated:import:${bname}`, nowIso(), randomUserId());
     return Number(r.lastInsertRowid);
   };
   const insertNote = db.query(`INSERT INTO notes

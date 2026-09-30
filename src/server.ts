@@ -1,7 +1,7 @@
 // server.ts — Abba: a quiet markdown notepad for an executive and their circle.
 // Bun + zero dependencies + SQLite. Port 3013.
 import { Database } from "bun:sqlite";
-import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, inviteExpiryIso, __setDbForTests } from "./db";
+import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, inviteExpiryIso, randomUserId, isUserId, __setDbForTests } from "./db";
 import { autoTitle, readMins, relatedIdeas, composeDigest, getDigest, listDigests, nudgesFor, dismissNudge, type NoteRow } from "./mind";
 import {
   getMesh, publicUrl, meshTick, meshProtocol, ensureNoteGids,
@@ -134,8 +134,8 @@ async function handle(req: Request): Promise<Response> {
     db.query("INSERT INTO circle (id, name, invite_code, invite_expires_at, created_at) VALUES (1, ?, ?, ?, ?)")
       .run(name, code, expiresAt, nowIso());
     const token = randomToken("abba_");
-    const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'owner', ?, ?)")
-      .run(ownerName, PALETTE[0], token, nowIso(), nowIso());
+    const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen, user_id) VALUES (?, ?, ?, 'owner', ?, ?, ?)")
+      .run(ownerName, PALETTE[0], token, nowIso(), nowIso(), randomUserId());
     const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
     try { publishCircleInvite(getMesh(), db); } catch { /* mesh not up in some paths */ }
     return json({ token, member: publicMember(member), circle: { name, inviteCode: code, inviteExpiresAt: expiresAt } });
@@ -147,20 +147,71 @@ async function handle(req: Request): Promise<Response> {
     const circle = db.query("SELECT * FROM circle WHERE id = 1").get() as any;
     if (!circle) return err("No circle yet — someone needs to start one first.", 404);
     const raw = String(b.code || "").trim().toLowerCase();
-    const own = !!raw && raw === circle.invite_code;
-    const peerOk = !own && !!findPeerInvite(getMesh(), raw);
-    if (!own && !peerOk) return err("That invite code doesn't match.", 403);
-    if (own && circle.invite_expires_at && Date.now() > Date.parse(circle.invite_expires_at))
-      return err("That invite code has expired — ask the circle's owner for a fresh one.", 403);
+    const userId = String(b.userId || "").trim();
+    // targeted invite: the owner added this exact user ID
+    let claimedUserId: string | null = null;
+    if (userId) {
+      if (!isUserId(userId)) return err("That user ID doesn't look right.", 400);
+      const inv = db.query("SELECT * FROM invited_users WHERE user_id = ?").get(userId) as any;
+      if (!inv) return err("That user ID isn't on this circle's invite list — ask the owner to add you.", 403);
+      if (inv.expires_at && Date.now() > Date.parse(inv.expires_at)) {
+        db.query("DELETE FROM invited_users WHERE user_id = ?").run(userId);
+        return err("That invitation has expired — ask the owner to add you again.", 403);
+      }
+      if (db.query("SELECT id FROM members WHERE user_id = ?").get(userId))
+        return err("That user ID has already joined.", 403);
+      claimedUserId = userId;
+    } else {
+      const own = !!raw && raw === circle.invite_code;
+      const peerOk = !own && !!findPeerInvite(getMesh(), raw);
+      if (!own && !peerOk) return err("That invite code doesn't match.", 403);
+      if (own && circle.invite_expires_at && Date.now() > Date.parse(circle.invite_expires_at))
+        return err("That invite code has expired — ask the circle's owner for a fresh one.", 403);
+    }
     const count = (db.query("SELECT COUNT(*) AS c FROM members WHERE role NOT IN ('remote', 'migrated')").get() as any).c;
     if (count >= circle.member_cap) return err("The circle is full — it stays intimate by design.", 403);
     const name = String(b.name || "").trim().slice(0, 40);
     if (!name) return err("Tell us your name so the circle knows who's here.", 400);
     const token = randomToken("abba_");
-    const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'member', ?, ?)")
-      .run(name, PALETTE[count % PALETTE.length], token, nowIso(), nowIso());
+    const uid = claimedUserId || randomUserId();
+    const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen, user_id) VALUES (?, ?, ?, 'member', ?, ?, ?)")
+      .run(name, PALETTE[count % PALETTE.length], token, nowIso(), nowIso(), uid);
+    if (claimedUserId) db.query("DELETE FROM invited_users WHERE user_id = ?").run(claimedUserId);
     const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
     return json({ token, member: publicMember(member) });
+  }
+
+  // owner: add a specific user to the circle by their user ID (targeted
+  // invite — they join with the ID instead of the shared code, one use each)
+  if (path === "/api/circle/invites") {
+    const caller = memberFrom(req);
+    if (!caller || caller.role !== "owner") return err("Only the circle's owner can do that.", 403);
+    if (req.method === "GET") {
+      const rows = db.query("SELECT user_id, name, created_at, expires_at FROM invited_users ORDER BY created_at ASC").all();
+      return json({ invites: rows });
+    }
+    if (req.method === "POST") {
+      const b = await body(req);
+      const userId = String(b.userId || "").trim();
+      if (!isUserId(userId)) return err("That doesn't look like a user ID — it starts with usr-.", 400);
+      if (db.query("SELECT id FROM members WHERE user_id = ?").get(userId))
+        return err("That user is already in the circle.", 409);
+      if (db.query("SELECT user_id FROM invited_users WHERE user_id = ?").get(userId))
+        return err("That user is already invited.", 409);
+      const nm = String(b.name || "").trim().slice(0, 40);
+      const exp = inviteExpiryIso();
+      db.query("INSERT INTO invited_users (user_id, name, created_at, expires_at) VALUES (?, ?, ?, ?)")
+        .run(userId, nm, nowIso(), exp);
+      return json({ invite: { userId, name: nm, expiresAt: exp } }, 201);
+    }
+    return err("Not found.", 404);
+  }
+  if (req.method === "DELETE" && path.startsWith("/api/circle/invites/")) {
+    const caller = memberFrom(req);
+    if (!caller || caller.role !== "owner") return err("Only the circle's owner can do that.", 403);
+    const userId = decodeURIComponent(path.slice("/api/circle/invites/".length));
+    const r = db.query("DELETE FROM invited_users WHERE user_id = ?").run(userId);
+    return json({ removed: r.changes > 0 });
   }
 
   // public: re-open an account with name + secret. Works when the account row
@@ -192,8 +243,8 @@ async function handle(req: Request): Promise<Response> {
       if (count >= circle.member_cap) return err("The circle is full — it stays intimate by design.", 403);
       const token = randomToken("abba_");
       const res = db.query(
-        "INSERT INTO members (name, color, token, role, created_at, last_seen, password_hash) VALUES (?, ?, ?, 'member', ?, ?, ?)",
-      ).run(String(cred.name).slice(0, 40), cred.color || "#A08C5B", token, nowIso(), nowIso(), cred.passwordHash);
+        "INSERT INTO members (name, color, token, role, created_at, last_seen, user_id, password_hash) VALUES (?, ?, ?, 'member', ?, ?, ?, ?)",
+      ).run(String(cred.name).slice(0, 40), cred.color || "#A08C5B", token, nowIso(), nowIso(), randomUserId(), cred.passwordHash);
       const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
       return json({ token, member: publicMember(member), fromMesh: true });
     }
@@ -230,8 +281,8 @@ async function handle(req: Request): Promise<Response> {
     db.query("INSERT INTO circle (id, name, invite_code, invite_expires_at, created_at) VALUES (1, ?, ?, ?, ?)")
       .run(name, code, expiresAt, nowIso());
     const token = randomToken("abba_");
-    const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'owner', ?, ?)")
-      .run(ownerName, PALETTE[0], token, nowIso(), nowIso());
+    const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen, user_id) VALUES (?, ?, ?, 'owner', ?, ?, ?)")
+      .run(ownerName, PALETTE[0], token, nowIso(), nowIso(), randomUserId());
     const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
     try { publishCircleInvite(getMesh(), db); } catch { /* mesh not up in some paths */ }
     return json({ token, member: publicMember(member), circle: { name, inviteCode: code, inviteExpiresAt: expiresAt } }, 201);
@@ -540,7 +591,7 @@ async function handle(req: Request): Promise<Response> {
 }
 
 function publicMember(m: any): any {
-  return { id: m.id, name: m.name, color: m.color, role: m.role, hasPassword: !!m.password_hash };
+  return { id: m.id, name: m.name, color: m.color, role: m.role, hasPassword: !!m.password_hash, userId: m.user_id || null };
 }
 
 // Issue a fresh circle invite code (7-day expiry) and advertise it to the
@@ -563,6 +614,9 @@ if (import.meta.main) {
     const db = getDb();
     const c = db.query("SELECT invite_expires_at FROM circle WHERE id = 1").get() as any;
     if (c && !c.invite_expires_at) db.query("UPDATE circle SET invite_expires_at = ? WHERE id = 1").run(inviteExpiryIso());
+    for (const m of db.query("SELECT id FROM members WHERE user_id IS NULL").all() as any[]) {
+      db.query("UPDATE members SET user_id = ? WHERE id = ?").run(randomUserId(), m.id);
+    }
     publishCircleInvite(getMesh(), db);
   } catch (e) { console.error("[mesh] invite publish:", (e as any)?.message); }
   Bun.serve({ port: PORT, fetch: handle });

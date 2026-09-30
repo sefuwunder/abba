@@ -34,7 +34,7 @@ Modeled after Apple Notes — folders, large titles, hairlines, quiet yellow:
 - **Notes lists** — title + "date · status — excerpt" rows, per-folder search, floating compose button (composing inside The Circle shares immediately)
 - **Note view** — calm reading type, your presence pill floats above the tab bar (tap: zen status icons, rest/share, and reactions fan out over the interface), related notes, conversation, export. ` ```mermaid ` fenced blocks render as diagrams (flowcharts, sequence diagrams, and more) in Abba's warm theme, light and dark — the library is vendored locally, so it works offline and no CDN is ever contacted
 - **Weekly Letters** — every digest edition on a shelf, newest first, each reading like a short editorial letter
-- **Circle** — members with quiet presence, invite code card (owner can rotate it; codes last 7 days and work on any peered Abba)
+- **Circle** — members with quiet presence, invite code card (owner can rotate it; codes last 7 days and work on any peered Abba), per-member user IDs, owner-only targeted invites by user ID
 - **Nudges** — small, dismissible, never badges: stale sprouts, unread ideas
 
 ## Layout
@@ -51,7 +51,7 @@ scripts/        screenshot helpers (dev only)
 ## Tests
 
 ```bash
-bun test   # 92 tests: circle lifecycle + mind unit + two-instance mesh sync (invite + knock) + mesh-wide expiring invite codes
+bun test   # 100 tests: circle lifecycle + mind unit + two-instance mesh sync (invite + knock) + mesh-wide expiring codes + targeted user-ID invites
 ```
 
 ## Mesh sync (peer-to-peer)
