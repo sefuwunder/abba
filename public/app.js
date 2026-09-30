@@ -306,6 +306,9 @@ const ZEN = {
   decided: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M21.3 13a8.3 8.3 0 1 1-2.5-5.9"/></svg>',
   resting: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M19.8 14.8A7.8 7.8 0 1 1 11.2 5.4a6.2 6.2 0 0 0 8.6 9.4z"/></svg>',
   share: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><circle cx="13" cy="13" r="1.8" fill="currentColor" stroke="none"/><circle cx="13" cy="13" r="6.2"/><circle cx="13" cy="13" r="10.5"/></svg>',
+  edit: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M5 19.5l1.2-4.2L16.7 4.8a2 2 0 0 1 2.8 2.8L9 18.1z"/><path d="M14.8 6.7l2.8 2.8"/></svg>',
+  export: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M13 4.5V15"/><path d="M8.8 11.2L13 15.4l4.2-4.2"/><path d="M5.5 19.5h15"/></svg>',
+  del: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M5 7h16"/><path d="M9.5 7V5h7v2"/><path d="M7 7l1 13.5h8L17 7"/><path d="M10.8 10.5v7M15.2 10.5v7"/></svg>',
 };
 function orbHtml(note) {
   const items = [];
@@ -320,13 +323,21 @@ function orbHtml(note) {
       count: note.reactionCounts[k] || 0, active: note.myReactions.indexOf(k) >= 0,
     });
   });
+  if (note.mine) {
+    items.push({ kind: "act", key: "edit", label: "Edit" });
+    items.push({ kind: "act", key: "export", label: "Export" });
+    items.push({ kind: "act", key: "del", label: "Delete" });
+  } else {
+    items.push({ kind: "act", key: "export", label: "Export" });
+  }
   const n = items.length, step = n > 1 ? 180 / (n - 1) : 0;
+  const dense = n > 9, radius = dense ? 168 : 145;
   const sats = items.map((it, i) => {
     const a = 180 + i * step;
     const inner = it.kind === "react"
       ? '<span class="c-emoji">' + it.emoji + "</span>" + (it.count ? '<span class="c-badge">' + it.count + "</span>" : "")
       : (ZEN[it.key] || '<span class="c-label">' + esc(it.label) + "</span>");
-    return '<button class="c-item' + (it.active ? " on" : "") + '" data-ck="' + it.kind + '" data-ckey="' + it.key + '"' +
+    return '<button class="c-item' + (it.active ? " on" : "") + (it.key === "del" ? " danger" : "") + '" data-ck="' + it.kind + '" data-ckey="' + it.key + '"' +
       ' style="--a:' + a.toFixed(1) + 'deg;--i:' + i + '" aria-label="' + esc(it.label || it.key) + '">' + inner + "</button>";
   }).join("");
   const me = state.me || {};
@@ -335,7 +346,7 @@ function orbHtml(note) {
   const hint = localStorage.getItem("abba_orb_seen")
     ? ""
     : '<div class="orb-hint" id="orbhint">Respond</div>';
-  return '<div class="orb-wrap" id="cstage">' + sats +
+  return '<div class="orb-wrap' + (dense ? " dense" : "") + '" id="cstage" style="--r:' + radius + 'px">' + sats +
     '<button class="orb-pill" id="ctoggle" aria-label="Respond"><span class="dot" style="background:' + color + '"></span><b>' + first + "</b></button>" +
     hint + "</div>";
 }
@@ -346,26 +357,56 @@ function relatedHtml(related) {
   }).join("");
   return '<p class="section-label">Related</p><div class="ngroup">' + rows + "</div>";
 }
-function commentsHtml(note) {
-  let inner;
-  if (note.comments.length) {
-    inner = note.comments.map(function (c) {
+let convoState = { id: null, open: false };
+function convoOpen() { return convoState.open; }
+function commentsHtml(note, open) {
+  const n = note.comments.length;
+  const label = n ? n + (n === 1 ? " thought" : " thoughts") : "Start the conversation";
+  let body = "";
+  if (open) {
+    const list = note.comments.map(function (c) {
       return '<div class="comment"><div class="who"><span class="dot" style="background:' + esc(c.author.color) +
         '"></span><b>' + esc(c.author.name) + "</b><span>" + relTime(c.createdAt) + "</span></div><p>" + esc(c.body) + "</p></div>";
     }).join("");
-  } else {
-    inner = '<p class="sub">No thoughts yet. The first one sets the tone.</p>';
+    body = '<div class="card" style="margin-top:6px"><div id="comments">' + list + "</div>" +
+      '<div class="comment-box"><input id="cbox" placeholder="Add a thought…" maxlength="5000">' +
+      '<button class="btn btn-primary" id="csend">↩</button></div></div>';
   }
-  return '<p class="section-label">Conversation</p><div class="card"><div id="comments">' + inner + "</div>" +
-    '<div class="comment-box"><input id="cbox" placeholder="Add a thought…" maxlength="5000">' +
-    '<button class="btn btn-primary" id="csend">↩</button></div></div>';
+  return '<button class="convo-toggle" id="convo-toggle"><span>💬</span><span>' + esc(label) +
+    '</span><span class="chev">' + (open ? "▾" : "▸") + "</span></button>" + body;
 }
-function actionsHtml(note) {
-  let h = '<div class="btn-row" style="margin:4px 0 8px">';
-  if (note.mine) h += '<button class="btn btn-ghost" id="edit">Edit</button>';
-  h += '<button class="btn btn-ghost" id="dl">Export</button>';
-  if (note.mine) h += '<button class="btn btn-danger" id="del">Delete</button>';
-  return h + "</div>";
+function bindConvo(note, id) {
+  const t = $("#convo-toggle");
+  if (t) t.onclick = () => {
+    convoState.open = !convoState.open;
+    const w = $("#convo-wrap");
+    if (w) { w.innerHTML = commentsHtml(note, convoState.open); bindConvo(note, id); }
+  };
+  const s = $("#csend");
+  if (s) s.onclick = async () => {
+    const v = $("#cbox").value.trim();
+    if (!v) return;
+    try {
+      await api("/api/notes/" + id + "/comments", { method: "POST", body: JSON.stringify({ body: v }) });
+      convoState.open = true;
+      viewDetail(id, false);
+    } catch (e) { toast(e.message); }
+  };
+  const box = $("#cbox");
+  if (box) box.addEventListener("keydown", e => { if (e.key === "Enter") $("#csend").click(); });
+}
+async function downloadNote(id) {
+  try {
+    const tok = localStorage.getItem("abba_token");
+    const res = await fetch("/api/notes/" + id + "/export", { headers: { Authorization: "Bearer " + tok } });
+    if (!res.ok) throw new Error("Export failed");
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "abba-" + id + ".md";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { toast(e.message); }
 }
 function editorHtml(note) {
   return '<div class="editbar"><button class="back" id="e-cancel">‹ Cancel</button>' +
@@ -394,7 +435,8 @@ function detailBodyHtml(note, related) {
     esc(note.author.name) + " · " + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min</p>" +
     linkBadge +
     tags + '<div class="reader">' + md(note.body) + "</div>" +
-    (note.link ? "" : orbHtml(note)) + relatedHtml(related) + commentsHtml(note) + actionsHtml(note);
+    (note.link ? "" : orbHtml(note)) + relatedHtml(related) +
+    '<div id="convo-wrap">' + commentsHtml(note, convoOpen()) + "</div>";
 }
 
 async function viewDetail(id, editing) {
@@ -407,6 +449,7 @@ async function viewDetail(id, editing) {
     return;
   }
   const related = await api("/api/notes/" + id + "/related").then(d => d.related).catch(() => []);
+  if (convoState.id !== id) convoState = { id: id, open: false };
   app.innerHTML = editing ? editorHtml(note) : detailBodyHtml(note, related);
   app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
   const bindNoteRows = () => app.querySelectorAll(".nrow[data-note]").forEach(r => r.onclick = () => location.hash = "#/note/" + r.dataset.note);
@@ -458,38 +501,22 @@ async function viewDetail(id, editing) {
           toast(note.shared ? "Back in your notepad." : "Shared with the circle.");
         } else if (kind === "react") {
           await api("/api/notes/" + id + "/react", { method: "POST", body: JSON.stringify({ kind: key }) });
+        } else if (kind === "act") {
+          if (key === "edit") { viewDetail(id, true); return; }
+          if (key === "export") { downloadNote(id); return; }
+          if (key === "del") {
+            if (!confirm("Delete this note for good?")) return;
+            await api("/api/notes/" + id, { method: "DELETE" });
+            toast("Deleted.");
+            location.hash = note.shared ? "#/list/circle" : "#/list/mine";
+            return;
+          }
         }
         viewDetail(id, false);
       } catch (e) { toast(e.message); }
     });
   }
-  $("#csend").onclick = async () => {
-    const v = $("#cbox").value.trim();
-    if (!v) return;
-    try { await api("/api/notes/" + id + "/comments", { method: "POST", body: JSON.stringify({ body: v }) }); viewDetail(id, false); }
-    catch (e) { toast(e.message); }
-  };
-  $("#cbox").addEventListener("keydown", e => { if (e.key === "Enter") $("#csend").click(); });
-  const ed = $("#edit"); if (ed) ed.onclick = () => viewDetail(id, true);
-  $("#dl").onclick = async () => {
-    try {
-      const tok = localStorage.getItem("abba_token");
-      const res = await fetch("/api/notes/" + id + "/export", { headers: { Authorization: "Bearer " + tok } });
-      if (!res.ok) throw new Error("Export failed");
-      const blob = await res.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "abba-" + id + ".md";
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    } catch (e) { toast(e.message); }
-  };
-  const del = $("#del");
-  if (del) del.onclick = async () => {
-    if (!confirm("Delete this note for good?")) return;
-    try { await api("/api/notes/" + id, { method: "DELETE" }); toast("Deleted."); location.hash = note.shared ? "#/list/circle" : "#/list/mine"; }
-    catch (e) { toast(e.message); }
-  };
+  bindConvo(note, id);
   heartbeat("note:" + id);
 }
 

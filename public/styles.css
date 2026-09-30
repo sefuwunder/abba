@@ -363,10 +363,14 @@ a { color: var(--terra-deep); }
     opacity 0.22s ease, background 0.15s ease, border-color 0.15s ease;
 }
 .orb-wrap.open .c-item {
-  transform: rotate(var(--a)) translate(145px) rotate(calc(var(--a) * -1));
+  transform: rotate(var(--a)) translate(var(--r, 145px)) rotate(calc(var(--a) * -1));
   scale: 1; opacity: 1; pointer-events: auto;
   transition-delay: calc(var(--i) * 40ms), calc(var(--i) * 40ms), calc(var(--i) * 40ms), 0ms, 0ms;
 }
+.orb-wrap.dense .c-item { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+.orb-wrap.dense .c-item .zen { width: 22px; height: 22px; }
+.orb-wrap.dense .c-item .c-emoji { font-size: 19px; }
+.orb-wrap .c-item.danger .zen { color: var(--danger); }
 .orb-wrap .c-item:active { scale: 0.9; }
 .orb-wrap .c-item.on { background: var(--terra-wash); border-color: var(--terra); }
 .orb-wrap .c-item .zen { width: 26px; height: 26px; color: var(--soft); }
@@ -448,3 +452,18 @@ a { color: var(--terra-deep); }
   /* gold surfaces need dark glyphs on the brighter gold */
   .fab, .orb-wrap .c-badge { color: #1A140E; }
 }
+
+/* ---- collapsible conversation ---- */
+.convo-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; padding: 10px 2px; margin-top: 14px;
+  font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--soft);
+  cursor: pointer; text-align: left;
+}
+.convo-toggle .chev { margin-left: auto; }
+
+/* ---- minimal tightening ---- */
+.section-label { margin: 22px 4px 8px; }
+.note-title { margin: 6px 0 4px; }
+.reader { padding: 4px 2px 8px; }
+.nrow { padding: 11px 16px; }
