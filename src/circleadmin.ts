@@ -11,8 +11,9 @@ import type { Database } from "bun:sqlite";
 import type { MeshStore } from "./mesh/store";
 import {
   gidFor, remoteMember, publishNote, publishReaction, publishComment, resetMeshNode,
+  publishCircleInvite,
 } from "./meshbridge";
-import { nowIso, randomToken, randomInviteCode } from "./db";
+import { nowIso, randomToken, randomInviteCode, inviteExpiryIso } from "./db";
 
 function tombstone(mesh: MeshStore, db: Database, noteId: number): void {
   const n = db.query("SELECT gid, shared FROM notes WHERE id = ?").get(noteId) as any;
@@ -35,7 +36,7 @@ function ensureMigratedMember(db: Database, oldId: number, name: string, color: 
   return r;
 }
 
-export function migrateCircle(db: Database, mesh: MeshStore, ownerId: number): { migratedNotes: number; inviteCode: string } {
+export function migrateCircle(db: Database, mesh: MeshStore, ownerId: number): { migratedNotes: number; inviteCode: string; inviteExpiresAt: string } {
   // 1. collect migratable notes: the owner's everything + local members' shared notes.
   //    Remote (mesh) notes are skipped — they re-sync from their origin peers.
   const notes = db.query(`SELECT n.*, m.name AS author_name, m.color AS author_color, m.role AS author_role
@@ -62,7 +63,9 @@ export function migrateCircle(db: Database, mesh: MeshStore, ownerId: number): {
   db.query("DELETE FROM mesh_seen").run();
   db.query("DELETE FROM members WHERE id != ? AND role != 'remote'").run(ownerId);
   const inviteCode = randomInviteCode();
-  db.query("UPDATE circle SET invite_code = ? WHERE id = 1").run(inviteCode);
+  const inviteExpiresAt = inviteExpiryIso();
+  db.query("UPDATE circle SET invite_code = ?, invite_expires_at = ? WHERE id = 1").run(inviteCode, inviteExpiresAt);
+  try { publishCircleInvite(mesh, db); } catch { /* ignore */ }
 
   // 4. re-insert with attribution preserved
   const migratedAs = new Map<number, number>(); // old member id -> migrated shadow id
@@ -107,7 +110,7 @@ export function migrateCircle(db: Database, mesh: MeshStore, ownerId: number): {
     }
     migrated++;
   }
-  return { migratedNotes: migrated, inviteCode };
+  return { migratedNotes: migrated, inviteCode, inviteExpiresAt };
 }
 
 export function burnCircle(db: Database, mesh: MeshStore): void {
@@ -194,8 +197,8 @@ export function importBundle(db: Database, mesh: MeshStore, bundle: any, circleN
   const color = String(bundle.profile.color || "#C0765A");
   const cname = String(circleName || `${name}'s Circle`).slice(0, 60);
   const code = randomInviteCode();
-  db.query("INSERT INTO circle (id, name, invite_code, created_at) VALUES (1, ?, ?, ?)")
-    .run(cname, code, nowIso());
+  db.query("INSERT INTO circle (id, name, invite_code, invite_expires_at, created_at) VALUES (1, ?, ?, ?, ?)")
+    .run(cname, code, inviteExpiryIso(), nowIso());
   const token = randomToken("abba_");
   const res = db.query(
     "INSERT INTO members (name, color, token, role, created_at, last_seen, password_hash) VALUES (?, ?, ?, 'owner', ?, ?, ?)",
@@ -256,5 +259,6 @@ export function importBundle(db: Database, mesh: MeshStore, bundle: any, circleN
       insertComment.run(nid, byId, c.body || "", c.createdAt || nowIso());
     }
   }
+  try { publishCircleInvite(mesh, db); } catch { /* ignore */ }
   return { token, memberId: ownerId, circle: { name: cname, inviteCode: code } };
 }

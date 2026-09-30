@@ -230,6 +230,9 @@ export async function meshTick(): Promise<void> {
     const n = applyMeshUpdates(m, db);
     if (n) console.log(`[mesh] applied ${n} update(s)`);
   } catch (e) { console.error("[mesh] apply:", (e as any)?.message); }
+  // keep our circle's invite code advertised mesh-wide (expiry included),
+  // so peered instances honor it — and learn when it lapses.
+  try { publishCircleInvite(m, db); } catch (e) { console.error("[mesh] publish invite:", (e as any)?.message); }
 }
 
 /** Factory reset the mesh node: new identity, empty KV/peers/blobs. */
@@ -241,6 +244,37 @@ export function resetMeshNode(): void {
     mkdirSync(join(m.dataDir, "blobs"), { recursive: true });
   } catch { /* nothing stored yet */ }
   m.identity = createIdentity(m.dataDir);
+}
+
+/** Publish this circle's invite code + expiry to the mesh so peered
+    instances honor it (codes are mesh-wide). Re-published every gossip
+    tick so expiry propagates without restarts. */
+export function publishCircleInvite(m: MeshStore, db: Database): void {
+  const circle = db.query("SELECT invite_code, invite_expires_at FROM circle WHERE id = 1").get() as any;
+  if (!circle?.invite_code) return;
+  m.putKv(`abba:circle-invite:${m.identity.id}`, JSON.stringify({
+    code: circle.invite_code, expiresAt: circle.invite_expires_at || null,
+    updatedAt: Date.now(), originNode: m.identity.id,
+  }));
+}
+
+/** Find a currently-valid invite code advertised by a peered instance.
+    KV rows were signature-verified at merge time; unknown peers are never
+    stored. Returns null for unknown or expired codes. */
+export function findPeerInvite(m: MeshStore, code: string): { originNode: string; code: string; expiresAt: string | null } | null {
+  const want = String(code || "").trim().toLowerCase();
+  if (!want) return null;
+  const now = Date.now();
+  for (const row of m.listKv()) {
+    if (!row.k.startsWith("abba:circle-invite:")) continue;
+    if (row.peer === m.identity.id) continue;
+    let v: any;
+    try { v = JSON.parse(row.v); } catch { continue; }
+    if (String(v.code || "").toLowerCase() !== want) continue;
+    if (v.expiresAt && Date.parse(v.expiresAt) <= now) continue; // lapsed
+    return { originNode: v.originNode || row.peer, code: v.code, expiresAt: v.expiresAt || null };
+  }
+  return null;
 }
 
 /** Publish a member's credential snapshot so the account can be re-opened

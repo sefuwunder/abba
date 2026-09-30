@@ -34,6 +34,7 @@ function migrate(d: Database): void {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       name TEXT NOT NULL DEFAULT 'The Circle',
       invite_code TEXT NOT NULL,
+      invite_expires_at TEXT,
       member_cap INTEGER NOT NULL DEFAULT 12,
       created_at TEXT NOT NULL
     );
@@ -107,7 +108,7 @@ function migrate(d: Database): void {
     );
   `);
   // mesh columns (added after the fact — idempotent)
-  for (const [table, column] of [["notes", "gid"], ["notes", "link_origin"], ["comments", "remote_gid"], ["members", "password_hash"]]) {
+  for (const [table, column] of [["notes", "gid"], ["notes", "link_origin"], ["comments", "remote_gid"], ["members", "password_hash"], ["circle", "invite_expires_at"]]) {
     const cols = d.query(`PRAGMA table_info(${table})`).all() as any[];
     if (!cols.some((c) => c.name === column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
   }
@@ -129,4 +130,11 @@ export function randomInviteCode(): string {
   const bytes = new Uint8Array(4);
   crypto.getRandomValues(bytes);
   return "abba-" + Buffer.from(bytes).toString("base64url").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6);
+}
+
+// Circle invite codes expire after 7 days and are honored mesh-wide:
+// a code issued by any peered instance joins that instance's circle.
+export const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
+export function inviteExpiryIso(): string {
+  return new Date(Date.now() + INVITE_TTL_MS).toISOString();
 }

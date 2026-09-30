@@ -615,6 +615,14 @@ async function viewLetter(weekKeyParam) {
 }
 
 /* ---------- members ---------- */
+function inviteExpiryHtml(iso) {
+  if (!iso) return "";
+  const ms = Date.parse(iso) - Date.now();
+  if (ms <= 0) return `<p class="sub" style="color:var(--danger)">This code has expired — issue a new one to keep inviting.</p>`;
+  const days = Math.ceil(ms / 86400000);
+  const d = new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `<p class="sub">Works on any peered Abba · expires ${d} (${days} day${days === 1 ? "" : "s"} left).</p>`;
+}
 async function viewMembers() {
   renderTabs("circle");
   const [{ members }, { here }] = await Promise.all([
@@ -641,7 +649,8 @@ async function viewMembers() {
     <p class="section-label">Invite</p>
     <div class="card invite-card">
       <div class="code">${esc(state.circle.inviteCode)}</div>
-      <p>Share this code — it opens the door. The circle stays small on purpose.</p>
+      <p>Share this code — it opens the door on this Abba and any it's peered with. The circle stays small on purpose.</p>
+      ${inviteExpiryHtml(state.circle.inviteExpiresAt)}
       <div class="btn-row">
         <button class="btn btn-ghost" id="copy">Copy invite link</button>
         ${isOwner ? `<button class="btn btn-quiet" id="regen" style="color:#C9BBA6">New code</button>` : ""}
@@ -686,7 +695,7 @@ async function viewMembers() {
   };
   const regen = $("#regen");
   if (regen) regen.onclick = async () => {
-    try { const d = await api("/api/invite/regenerate", { method: "POST" }); state.circle.inviteCode = d.inviteCode; viewMembers(); toast("New code issued."); }
+    try { const d = await api("/api/invite/regenerate", { method: "POST" }); state.circle.inviteCode = d.inviteCode; state.circle.inviteExpiresAt = d.inviteExpiresAt; viewMembers(); toast("New code issued."); }
     catch (e) { toast(e.message); }
   };
   renderMeshCard(isOwner);
@@ -723,6 +732,7 @@ async function viewMembers() {
     try {
       const d = await api("/api/circle/migrate", { method: "POST" });
       state.circle.inviteCode = d.inviteCode;
+      state.circle.inviteExpiresAt = d.inviteExpiresAt;
       toast(`New circle ready — ${d.migratedNotes} notes migrated.`);
       viewMembers();
     } catch (e) { toast(e.message); }

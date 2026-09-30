@@ -1,12 +1,12 @@
 // server.ts — Abba: a quiet markdown notepad for an executive and their circle.
 // Bun + zero dependencies + SQLite. Port 3013.
 import { Database } from "bun:sqlite";
-import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, __setDbForTests } from "./db";
+import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, inviteExpiryIso, __setDbForTests } from "./db";
 import { autoTitle, readMins, relatedIdeas, composeDigest, getDigest, listDigests, nudgesFor, dismissNudge, type NoteRow } from "./mind";
 import {
   getMesh, publicUrl, meshTick, meshProtocol, ensureNoteGids,
   publishNote, publishNoteTombstone, publishReaction, publishComment,
-  publishMemberCredential, findMeshCredential,
+  publishMemberCredential, findMeshCredential, publishCircleInvite, findPeerInvite,
 } from "./meshbridge";
 import { migrateCircle, burnCircle, resetAbba, exportMemberBundle, importBundle } from "./circleadmin";
 import { peerIdFor } from "./mesh/identity";
@@ -130,21 +130,28 @@ async function handle(req: Request): Promise<Response> {
     const name = String(b.name || "The Circle").slice(0, 60);
     const ownerName = String(b.ownerName || "You").slice(0, 40);
     const code = randomInviteCode();
-    db.query("INSERT INTO circle (id, name, invite_code, created_at) VALUES (1, ?, ?, ?)")
-      .run(name, code, nowIso());
+    const expiresAt = inviteExpiryIso();
+    db.query("INSERT INTO circle (id, name, invite_code, invite_expires_at, created_at) VALUES (1, ?, ?, ?, ?)")
+      .run(name, code, expiresAt, nowIso());
     const token = randomToken("abba_");
     const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'owner', ?, ?)")
       .run(ownerName, PALETTE[0], token, nowIso(), nowIso());
     const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
-    return json({ token, member: publicMember(member), circle: { name, inviteCode: code } });
+    try { publishCircleInvite(getMesh(), db); } catch { /* mesh not up in some paths */ }
+    return json({ token, member: publicMember(member), circle: { name, inviteCode: code, inviteExpiresAt: expiresAt } });
   }
 
-  // join via invite code
+  // join via invite code — own code, or any peered instance's code (mesh-wide)
   if (req.method === "POST" && path === "/api/join") {
     const b = await body(req);
     const circle = db.query("SELECT * FROM circle WHERE id = 1").get() as any;
     if (!circle) return err("No circle yet — someone needs to start one first.", 404);
-    if (String(b.code || "").trim().toLowerCase() !== circle.invite_code) return err("That invite code doesn't match.", 403);
+    const raw = String(b.code || "").trim().toLowerCase();
+    const own = !!raw && raw === circle.invite_code;
+    const peerOk = !own && !!findPeerInvite(getMesh(), raw);
+    if (!own && !peerOk) return err("That invite code doesn't match.", 403);
+    if (own && circle.invite_expires_at && Date.now() > Date.parse(circle.invite_expires_at))
+      return err("That invite code has expired — ask the circle's owner for a fresh one.", 403);
     const count = (db.query("SELECT COUNT(*) AS c FROM members WHERE role NOT IN ('remote', 'migrated')").get() as any).c;
     if (count >= circle.member_cap) return err("The circle is full — it stays intimate by design.", 403);
     const name = String(b.name || "").trim().slice(0, 40);
@@ -219,13 +226,15 @@ async function handle(req: Request): Promise<Response> {
     }
     resetAbba(db, getMesh());
     const code = randomInviteCode();
-    db.query("INSERT INTO circle (id, name, invite_code, created_at) VALUES (1, ?, ?, ?)")
-      .run(name, code, nowIso());
+    const expiresAt = inviteExpiryIso();
+    db.query("INSERT INTO circle (id, name, invite_code, invite_expires_at, created_at) VALUES (1, ?, ?, ?, ?)")
+      .run(name, code, expiresAt, nowIso());
     const token = randomToken("abba_");
     const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'owner', ?, ?)")
       .run(ownerName, PALETTE[0], token, nowIso(), nowIso());
     const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
-    return json({ token, member: publicMember(member), circle: { name, inviteCode: code } }, 201);
+    try { publishCircleInvite(getMesh(), db); } catch { /* mesh not up in some paths */ }
+    return json({ token, member: publicMember(member), circle: { name, inviteCode: code, inviteExpiresAt: expiresAt } }, 201);
   }
 
   // public status: does a circle exist yet? (for the welcome screen)
@@ -266,13 +275,12 @@ async function handle(req: Request): Promise<Response> {
   }
   if (req.method === "GET" && path === "/api/circle") {
     const circle = db.query("SELECT * FROM circle WHERE id = 1").get() as any;
-    return json({ name: circle?.name || "The Circle", inviteCode: circle?.invite_code, memberCap: circle?.member_cap || 12 });
+    return json({ name: circle?.name || "The Circle", inviteCode: circle?.invite_code, inviteExpiresAt: circle?.invite_expires_at || null, memberCap: circle?.member_cap || 12 });
   }
   if (req.method === "POST" && path === "/api/invite/regenerate") {
     if (me.role !== "owner") return err("Only the circle's owner can do that.", 403);
-    const code = randomInviteCode();
-    db.query("UPDATE circle SET invite_code = ? WHERE id = 1").run(code);
-    return json({ inviteCode: code });
+    const { code, expiresAt } = issueInviteCode(db);
+    return json({ inviteCode: code, inviteExpiresAt: expiresAt });
   }
   if (req.method === "GET" && path === "/api/members") {
     const members = db.query("SELECT id, name, color, role, last_seen FROM members ORDER BY created_at ASC").all();
@@ -535,10 +543,28 @@ function publicMember(m: any): any {
   return { id: m.id, name: m.name, color: m.color, role: m.role, hasPassword: !!m.password_hash };
 }
 
+// Issue a fresh circle invite code (7-day expiry) and advertise it to the
+// mesh so peered instances honor it. Used by init, reset, and regenerate.
+function issueInviteCode(db: Database): { code: string; expiresAt: string } {
+  const code = randomInviteCode();
+  const expiresAt = inviteExpiryIso();
+  db.query("UPDATE circle SET invite_code = ?, invite_expires_at = ? WHERE id = 1").run(code, expiresAt);
+  try { publishCircleInvite(getMesh(), db); } catch { /* mesh not up in some paths */ }
+  return { code, expiresAt };
+}
+
 export function __resetForTests(d: Database): void { __setDbForTests(d); }
 
 if (import.meta.main) {
   ensureNoteGids(getDb(), getMesh());
+  // existing circles predate expiring codes: grant the current code a fresh
+  // 7-day window rather than expiring it out from under the owner.
+  try {
+    const db = getDb();
+    const c = db.query("SELECT invite_expires_at FROM circle WHERE id = 1").get() as any;
+    if (c && !c.invite_expires_at) db.query("UPDATE circle SET invite_expires_at = ? WHERE id = 1").run(inviteExpiryIso());
+    publishCircleInvite(getMesh(), db);
+  } catch (e) { console.error("[mesh] invite publish:", (e as any)?.message); }
   Bun.serve({ port: PORT, fetch: handle });
   console.log(`Abba listening on http://localhost:${PORT}  (mesh node ${getMesh().identity.id})`);
   setTimeout(meshTick, 10000);
