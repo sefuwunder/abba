@@ -774,6 +774,10 @@ async function renderMeshCard(isOwner) {
     <div class="btn-row" style="margin-top:10px">
       <input id="mesh-join-code" class="mono" placeholder="paste instance invite…" style="flex:1;min-width:0;font-size:11px">
       <button class="btn btn-primary" id="mesh-join">Join</button>
+    </div>
+    <div class="btn-row" style="margin-top:10px">
+      <input id="mesh-knock-url" class="mono" placeholder="https://… — peer by URL, no invite needed" style="flex:1;min-width:0;font-size:11px">
+      <button class="btn btn-primary" id="mesh-knock">Peer</button>
     </div>` : `<p class="sub">Only the circle's owner can peer instances.</p>`}`;
   const inv = $("#mesh-invite");
   if (inv) inv.onclick = async () => {
@@ -794,6 +798,13 @@ async function renderMeshCard(isOwner) {
     const code = $("#mesh-join-code").value.trim();
     if (!code) return;
     try { await api("/api/mesh/join", { method: "POST", body: JSON.stringify({ code }) }); toast("Instance peered. Syncing…"); renderMeshCard(isOwner); }
+    catch (e) { toast(e.message); }
+  };
+  const kn = $("#mesh-knock");
+  if (kn) kn.onclick = async () => {
+    const url = $("#mesh-knock-url").value.trim();
+    if (!url) return;
+    try { await api("/api/mesh/knock", { method: "POST", body: JSON.stringify({ url }) }); toast("Instance peered. Syncing…"); renderMeshCard(isOwner); }
     catch (e) { toast(e.message); }
   };
   const sy = $("#mesh-sync");

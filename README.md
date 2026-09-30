@@ -45,7 +45,7 @@ scripts/        screenshot helpers (dev only)
 ## Tests
 
 ```bash
-bun test   # 45 tests: circle lifecycle + mind unit + two-instance mesh sync
+bun test   # 77 tests: circle lifecycle + mind unit + two-instance mesh sync (invite + knock)
 ```
 
 ## Mesh sync (peer-to-peer)
@@ -55,7 +55,10 @@ ed25519 identity, signed KV, gossip). Peer two Abba instances and their shared
 circle notes replicate over each instance's Cloudflare tunnel:
 
 - **Circle → Mesh sync** (owner only): create an instance invite on one Abba,
-  paste it into the other's Join. Peering is mutual — both sides sync both ways.
+  paste it into the other's Join — or **Peer by URL**: paste the other
+  instance's URL (e.g. its Cloudflare tunnel address) and knock; the remote's
+  identity is self-verifying (node id = hash of its pubkey), and it adds you
+  back automatically. Peering is mutual — both sides sync both ways.
 - Only **shared** notes leave the instance; the private notepad never syncs.
   Unshare and delete publish retractions so peers drop the note.
 - Notes sync as single-writer snapshots (last-writer-wins); reactions use one

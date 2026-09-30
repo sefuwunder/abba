@@ -9,6 +9,7 @@ import {
   publishMemberCredential, findMeshCredential,
 } from "./meshbridge";
 import { migrateCircle, burnCircle, resetAbba, exportMemberBundle, importBundle } from "./circleadmin";
+import { peerIdFor } from "./mesh/identity";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
@@ -298,6 +299,41 @@ async function handle(req: Request): Promise<Response> {
         await meshTick(); // pull immediately so the circle appears right away
         return json({ peer: { id: p.id, url: p.url, name: p.name } });
       } catch (e: any) { return err(e.message || "Bad invite code.", 400); }
+    }
+    // knock: peer with an instance by URL alone — no invite code needed.
+    // The remote's identity is cryptographically bound (id = hash of pubkey),
+    // so the /api/sync/state response is self-verifying. Mutual peering
+    // completes through the same public accept handshake the invite flow uses.
+    if (req.method === "POST" && path === "/api/mesh/knock") {
+      const b = await body(req);
+      const raw = String(b.url || "").trim();
+      if (!raw) return err("Instance URL required.", 400);
+      if (!/^https?:\/\//i.test(raw)) return err("Use a full http(s) URL, e.g. https://abba.example.com.", 400);
+      const base = raw.replace(/\/+$/, "");
+      let st: any;
+      try {
+        const r = await fetch(base + "/api/sync/state", { signal: AbortSignal.timeout(10000) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        st = await r.json();
+      } catch (e: any) {
+        return err("Couldn't reach that instance: " + (e?.message || e), 502);
+      }
+      if (!st || !st.id || !st.pubkey || peerIdFor(st.pubkey) !== st.id)
+        return err("That URL isn't an Abba mesh node (identity check failed).", 400);
+      if (st.id === mesh.identity.id) return err("That's this Abba — you can't peer with yourself.", 400);
+      const p = mesh.addPeer(st.id, base, st.pubkey, "");
+      // mutual peering: hand our own invite back so they sync from us too
+      try {
+        const back = await fetch(base + "/api/mesh/accept", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: mesh.createInvite() }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!back.ok) console.error("[mesh] peer did not accept our invite");
+      } catch (e: any) { console.error("[mesh] accept-back failed:", e.message); }
+      await meshTick(); // pull immediately so the circle appears right away
+      return json({ peer: { id: p.id, url: p.url, name: p.name } });
     }
     const delMp = path.match(/^\/api\/mesh\/peers\/([0-9a-f]{32})$/);
     if (delMp && req.method === "DELETE") return json({ removed: mesh.removePeer(delMp[1]) });
