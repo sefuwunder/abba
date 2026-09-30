@@ -101,6 +101,8 @@ async function handle(req: Request): Promise<Response> {
     return new Response(Bun.file(`${import.meta.dir}/../public/styles.css`), { headers: { "Content-Type": "text/css" } });
   if (req.method === "GET" && path === "/favicon.svg")
     return new Response(Bun.file(`${import.meta.dir}/../public/favicon.svg`), { headers: { "Content-Type": "image/svg+xml" } });
+  if (req.method === "GET" && path === "/vendor/mermaid.min.js")
+    return new Response(Bun.file(`${import.meta.dir}/../public/vendor/mermaid.min.js`), { headers: { "Content-Type": "text/javascript", "Cache-Control": "public, max-age=31536000, immutable" } });
 
   // bootstrap: create the circle (only when none exists)
   if (req.method === "POST" && path === "/api/circle/init") {

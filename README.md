@@ -26,7 +26,7 @@ Modeled after Apple Notes — folders, large titles, hairlines, quiet yellow:
 
 - **Folders** — a personal greeting, then *My Notepad*, *The Circle*, and *Weekly Letters*, each with a count
 - **Notes lists** — title + "date · status — excerpt" rows, per-folder search, floating compose button (composing inside The Circle shares immediately)
-- **Note view** — calm reading type, your presence pill floats above the tab bar (tap: zen status icons, rest/share, and reactions fan out over the interface), related notes, conversation, export
+- **Note view** — calm reading type, your presence pill floats above the tab bar (tap: zen status icons, rest/share, and reactions fan out over the interface), related notes, conversation, export. ` ```mermaid ` fenced blocks render as diagrams (flowcharts, sequence diagrams, and more) in Abba's warm theme, light and dark — the library is vendored locally, so it works offline and no CDN is ever contacted
 - **Weekly Letters** — every digest edition on a shelf, newest first, each reading like a short editorial letter
 - **Circle** — members with quiet presence, invite code card (owner can rotate it)
 - **Nudges** — small, dismissible, never badges: stale sprouts, unread ideas

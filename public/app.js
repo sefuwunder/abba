@@ -21,12 +21,18 @@ function inline(s) {
 }
 function md(src) {
   const lines = String(src || "").split("\n");
-  let html = "", inUl = false, inOl = false, inPre = false, para = [];
+  let html = "", inUl = false, inOl = false, inPre = false, inMer = false, para = [];
   const flushPara = () => { if (para.length) { html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
   const closeLists = () => { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } };
   for (const raw of lines) {
     const line = raw;
-    if (/^```/.test(line)) { flushPara(); closeLists(); html += inPre ? "</code></pre>" : "<pre><code>"; inPre = !inPre; continue; }
+    if (/^```/.test(line)) {
+      flushPara(); closeLists();
+      if (inPre) { html += inMer ? "</pre>" : "</code></pre>"; inPre = false; inMer = false; }
+      else if (line.slice(3).trim().toLowerCase() === "mermaid") { html += '<pre class="mermaid">'; inPre = true; inMer = true; }
+      else { html += "<pre><code>"; inPre = true; }
+      continue;
+    }
     if (inPre) { html += esc(line) + "\n"; continue; }
     if (/^\s*$/.test(line)) { flushPara(); closeLists(); continue; }
     let m;
@@ -38,8 +44,49 @@ function md(src) {
     para.push(line);
   }
   flushPara(); closeLists();
-  if (inPre) html += "</code></pre>";
+  if (inPre) html += inMer ? "</pre>" : "</code></pre>";
   return html;
+}
+
+/* ---------- mermaid ---------- */
+let mermaidLoading = null;
+function renderMermaid() {
+  if (!document.querySelector("pre.mermaid:not([data-mermaid])")) return;
+  const run = () => {
+    try {
+      const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      window.mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        themeVariables: dark ? {
+          darkMode: true, background: "transparent",
+          primaryColor: "#2E2620", primaryTextColor: "#EDE4D3", primaryBorderColor: "#C9973F",
+          lineColor: "#C9973F", secondaryColor: "#241D16", tertiaryColor: "#1E1813",
+          edgeLabelBackground: "#2E2620",
+        } : {
+          background: "transparent",
+          primaryColor: "#FFFDF9", primaryTextColor: "#3A2E1E", primaryBorderColor: "#A07E1C",
+          lineColor: "#A07E1C", secondaryColor: "#F7F1E6", tertiaryColor: "#FFFFFF",
+          edgeLabelBackground: "#FFFDF9",
+        },
+        flowchart: { curve: "basis" },
+      });
+      const ran = window.mermaid.run({ querySelector: "pre.mermaid:not([data-mermaid])" });
+      if (ran && ran.catch) ran.catch(() => {});
+      document.querySelectorAll("pre.mermaid:not([data-mermaid])").forEach(el => el.setAttribute("data-mermaid", "1"));
+    } catch (e) { /* leave the source readable */ }
+  };
+  if (window.mermaid) { run(); return; }
+  if (!mermaidLoading) {
+    mermaidLoading = new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "/vendor/mermaid.min.js?v=11.4.1";
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  mermaidLoading.then(run).catch(() => { mermaidLoading = null; });
 }
 
 /* ---------- api ---------- */
@@ -539,6 +586,7 @@ async function viewDetail(id, editing) {
     });
   }
   bindConvo(note, id);
+  renderMermaid();
   heartbeat("note:" + id);
 }
 

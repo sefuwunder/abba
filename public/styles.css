@@ -295,6 +295,11 @@ a { color: var(--terra-deep); }
 .reader code { font-family: ui-monospace, monospace; font-size: 0.88em; background: #F1EAE0; padding: 2px 6px; border-radius: 6px; }
 .reader pre { background: #2A2118; color: #F3EAD9; padding: 14px; border-radius: 10px; overflow-x: auto; }
 .reader pre code { background: none; padding: 0; color: inherit; }
+.reader pre.mermaid {
+  background: transparent; border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 8px; display: flex; justify-content: center; overflow-x: auto;
+}
+.reader pre.mermaid svg { max-width: 100%; height: auto; }
 .reader hr { border: none; border-top: 1px solid var(--line); margin: 1.4em 0; }
 
 /* editor */
