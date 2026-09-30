@@ -741,8 +741,8 @@ async function viewWelcome() {
       <div class="field"><label>New circle's name</label><input id="w-f-circle" placeholder="e.g. The Corner Table" maxlength="60"></div>
       <div class="field"><label>Your name</label><input id="w-f-name" placeholder="What should the circle call you?" maxlength="40"></div>
       ${ownerHere ? "" : `
-      <div class="field"><label>Current owner's name</label><input id="w-f-owner" placeholder="The name the circle knows them by" maxlength="40"></div>
-      <div class="field"><label>Owner's secret</label><input id="w-f-pass" type="password" placeholder="Their secret phrase" autocomplete="current-password"></div>`}
+      <div class="field"><label>Current owner's name (if they set a secret)</label><input id="w-f-owner" placeholder="The name the circle knows them by" maxlength="40"></div>
+      <div class="field"><label>Owner's secret (if set)</label><input id="w-f-pass" type="password" placeholder="Their secret phrase" autocomplete="current-password"></div>`}
       <div class="btn-row"><button class="btn btn-ghost" id="w-f-go" style="color:#B0442F;border-color:#E3B7A9">Wipe and start fresh</button></div>
     </div>
     <div class="card" id="w-reopen-card" style="display:none;text-align:left">
@@ -799,15 +799,16 @@ async function viewWelcome() {
     if (!confirm("Wipe this Abba completely and start \"" + circleName + "\"? There's no undo.")) return;
     try {
       if (!(state.me && state.me.role === "owner")) {
+        // owner secret when one exists; pre-secrets instances skip this via the recovery hatch
         const on = (($("#w-f-owner") || {}).value || "").trim();
         const op = (($("#w-f-pass") || {}).value || "");
-        if (!on || !op) { toast("The current owner's name and secret are needed."); return; }
-        const ro = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: on, password: op }) });
-        if (ro.member.role !== "owner") { toast("Only the owner can start a brand new circle."); return; }
-        localStorage.setItem("abba_token", ro.token);
+        if (on && op) {
+          const ro = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: on, password: op }) });
+          if (ro.member.role !== "owner") { toast("Only the owner can start a brand new circle."); return; }
+          localStorage.setItem("abba_token", ro.token);
+        }
       }
-      await api("/api/circle/reset", { method: "POST" });
-      const init = await api("/api/circle/init", {
+      const init = await api("/api/circle/fresh-start", {
         method: "POST", body: JSON.stringify({ name: circleName, ownerName: ownerName.trim() }),
       });
       localStorage.setItem("abba_token", init.token);

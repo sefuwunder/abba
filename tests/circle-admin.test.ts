@@ -228,3 +228,54 @@ describe("reset", () => {
     expect(members.members.length).toBe(1);
   });
 });
+
+describe("fresh-start", () => {
+  const F_PORT = 32109;
+  const nodeIdOf = (code: string): string =>
+    JSON.parse(Buffer.from(code, "base64url").toString("utf8")).id;
+  const freshStart = (body: any, token = "") =>
+    api(F_PORT, "/api/circle/fresh-start", {
+      method: "POST", ...(token ? auth(token) : { headers: { "Content-Type": "application/json" } }),
+      body: JSON.stringify(body),
+    });
+
+  beforeAll(async () => {
+    spawn(F_PORT, mkdtempSync(join(tmpdir(), "abba-fresh-")));
+    await waitUp(F_PORT);
+    const r = await api(F_PORT, "/api/circle/init", {
+      method: "POST", ...auth(""), body: JSON.stringify({ name: "Old", ownerName: "June" }),
+    });
+    (globalThis as any).__freshOwner = r.token;
+    await api(F_PORT, "/api/notes", { method: "POST", ...auth(r.token), body: JSON.stringify({ body: "old note", shared: true }) });
+  }, 60000);
+
+  test("recovery hatch: no token works when nobody set a secret", async () => {
+    const before = await api(F_PORT, "/api/mesh/invite", { method: "POST", ...auth((globalThis as any).__freshOwner) });
+    const d = await freshStart({ name: "New Dawn", ownerName: "June" });
+    expect(d.member.role).toBe("owner");
+    expect(d.member.name).toBe("June");
+    expect(d.circle.name).toBe("New Dawn");
+    (globalThis as any).__freshOwner = d.token;
+    // old data gone, new identity minted
+    const notes = await api(F_PORT, "/api/notes?scope=mine", auth(d.token));
+    expect(notes.notes.length).toBe(0);
+    const after = await api(F_PORT, "/api/mesh/invite", { method: "POST", ...auth(d.token) });
+    expect(nodeIdOf(after.code)).not.toBe(nodeIdOf(before.code));
+  });
+
+  test("locked once a secret exists: no token -> 403", async () => {
+    const tok = (globalThis as any).__freshOwner;
+    await api(F_PORT, "/api/account/password", { method: "POST", ...auth(tok), body: JSON.stringify({ password: "june secret" }) });
+    try {
+      await freshStart({ name: "Nope", ownerName: "June" });
+      expect.unreachable();
+    } catch (e: any) { expect(String(e.message)).toContain("owner"); }
+  });
+
+  test("owner token still works after secrets exist", async () => {
+    const tok = (globalThis as any).__freshOwner;
+    const d = await freshStart({ name: "Third", ownerName: "June" }, tok);
+    expect(d.circle.name).toBe("Third");
+    expect(d.member.role).toBe("owner");
+  });
+});

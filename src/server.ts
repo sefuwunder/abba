@@ -185,6 +185,29 @@ async function handle(req: Request): Promise<Response> {
     } catch (e: any) { return err(e.message || "Bad migration bundle.", 400); }
   }
 
+  // public: start a brand new circle from the welcome page (reset + init atomically).
+  // Owner-only — except on pre-secrets instances where no member has a password
+  // hash, in which case nobody can prove ownership and the wipe is the recovery path.
+  if (req.method === "POST" && path === "/api/circle/fresh-start") {
+    const b = await body(req);
+    const name = String(b.name || "The Circle").slice(0, 60);
+    const ownerName = String(b.ownerName || "You").slice(0, 40);
+    const caller = memberFrom(req);
+    if (!caller || caller.role !== "owner") {
+      const anySecret = db.query("SELECT 1 FROM members WHERE password_hash IS NOT NULL AND password_hash != ''").get();
+      if (anySecret) return err("Only the circle's owner can do that.", 403);
+    }
+    resetAbba(db, getMesh());
+    const code = randomInviteCode();
+    db.query("INSERT INTO circle (id, name, invite_code, created_at) VALUES (1, ?, ?, ?)")
+      .run(name, code, nowIso());
+    const token = randomToken("abba_");
+    const res = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'owner', ?, ?)")
+      .run(ownerName, PALETTE[0], token, nowIso(), nowIso());
+    const member = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
+    return json({ token, member: publicMember(member), circle: { name, inviteCode: code } }, 201);
+  }
+
   // public status: does a circle exist yet? (for the welcome screen)
   if (req.method === "GET" && path === "/api/status") {
     const circle = db.query("SELECT id FROM circle WHERE id = 1").get();
