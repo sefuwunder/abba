@@ -85,9 +85,16 @@ async function handle(req: Request): Promise<Response> {
   const path = url.pathname;
   const db = getDb();
 
-  // static
-  if (req.method === "GET" && (path === "/" || path === "/index.html"))
-    return new Response(Bun.file(`${import.meta.dir}/../public/index.html`));
+  // static — index.html gets a cache-busting version so clients never run stale JS
+  if (req.method === "GET" && (path === "/" || path === "/index.html")) {
+    const dir = `${import.meta.dir}/../public`;
+    let v = 0;
+    for (const f of ["app.js", "styles.css", "index.html"]) {
+      try { v = Math.max(v, Bun.file(`${dir}/${f}`).lastModified); } catch { /* ignore */ }
+    }
+    const html = (await Bun.file(`${dir}/index.html`).text()).replaceAll("__V__", String(Math.floor(v / 1000)));
+    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
   if (req.method === "GET" && path === "/app.js")
     return new Response(Bun.file(`${import.meta.dir}/../public/app.js`), { headers: { "Content-Type": "text/javascript" } });
   if (req.method === "GET" && path === "/styles.css")
