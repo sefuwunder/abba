@@ -59,6 +59,11 @@ circle notes replicate over each instance's Cloudflare tunnel:
   instance's URL (e.g. its Cloudflare tunnel address) and knock; the remote's
   identity is self-verifying (node id = hash of its pubkey), and it adds you
   back automatically. Peering is mutual — both sides sync both ways.
+- `./tunnel.sh` runs `cloudflared tunnel --url http://localhost:3013`,
+  captures the public URL, and writes it to `.env` as `ABBA_PUBLIC_URL`.
+  Run it on each box you want reachable, restart Abba, then peer by URL.
+  (Quick-tunnel hostnames change on restart — use a named tunnel for a
+  stable address.)
 - Only **shared** notes leave the instance; the private notepad never syncs.
   Unshare and delete publish retractions so peers drop the note.
 - Notes sync as single-writer snapshots (last-writer-wins); reactions use one
