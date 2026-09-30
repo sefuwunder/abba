@@ -337,27 +337,29 @@ a { color: var(--terra-deep); }
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(88px + env(safe-area-inset-bottom)); z-index: 60;
 }
-.orb-pill {
-  display: flex; align-items: center; gap: 7px; cursor: pointer;
-  background: var(--glass-bg); border: 1px solid var(--glass-brd); border-radius: 999px;
+.orb-toggle {
+  width: 62px; height: 62px; border-radius: 50%; cursor: pointer; padding: 0;
+  background: var(--glass-bg); border: 1px solid var(--glass-brd);
   -webkit-backdrop-filter: blur(18px) saturate(1.35); backdrop-filter: blur(18px) saturate(1.35);
-  padding: 8px 15px 8px 11px; font-family: var(--sans); position: relative; z-index: 3;
+  display: grid; place-items: center; position: relative; z-index: 3;
+  color: var(--ink);
   box-shadow: 0 8px 28px rgba(60, 40, 20, 0.16);
-  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+  transition: transform 0.15s ease;
 }
-.orb-pill:active { transform: scale(0.94); }
-.orb-pill .dot { width: 13px; height: 13px; margin: 0; }
-.orb-pill b { font-size: 13.5px; color: var(--ink); font-weight: 600; }
-.orb-wrap.open .orb-pill { background: var(--glass-ink); border-color: transparent; }
-.orb-wrap.open .orb-pill b { color: var(--paper); }
+.orb-toggle:active { transform: scale(0.92); }
+.orb-toggle .enso {
+  position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px);
+  pointer-events: none;
+}
+.orb-toggle .tchev { width: 14px; height: 10px; transition: transform 0.25s ease; }
+.orb-wrap.open .orb-toggle .tchev { transform: rotate(180deg); }
 .orb-hint {
-  position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 4;
   background: var(--glass-ink); color: var(--paper); font-size: 12px; font-weight: 600;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   padding: 6px 13px; border-radius: 999px; white-space: nowrap; font-family: var(--sans);
   transition: opacity 0.25s ease; pointer-events: none;
 }
-.orb-wrap.open .orb-hint { opacity: 0; }
 .orb-wrap .c-item {
   position: absolute; left: 50%; top: 50%; width: 56px; height: 56px;
   margin: -28px 0 0 -28px; border-radius: 50%;

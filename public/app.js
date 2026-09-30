@@ -341,13 +341,14 @@ function orbHtml(note) {
       ' style="--a:' + a.toFixed(1) + 'deg;--i:' + i + '" aria-label="' + esc(it.label || it.key) + '">' + inner + "</button>";
   }).join("");
   const me = state.me || {};
-  const first = esc((me.name || "You").split(" ")[0]);
   const color = esc(me.color || "#A08C5B");
   const hint = localStorage.getItem("abba_orb_seen")
     ? ""
-    : '<div class="orb-hint" id="orbhint">Respond</div>';
+    : '<div class="orb-hint" id="orbhint">Tap for reactions &amp; more</div>';
+  const enso = '<svg class="enso" viewBox="0 0 60 60" aria-hidden="true"><path d="M30 7 C43 7 53 17 53 30 C53 43 43 52 30 53 C17 54 7 44 7 31 C7 19 16 8 28 7" fill="none" stroke="' + color + '" stroke-width="3.4" stroke-linecap="round"/></svg>';
+  const tchev = '<svg class="tchev" viewBox="0 0 12 8" aria-hidden="true"><path d="M1.5 1.5 L6 6 L10.5 1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   return '<div class="orb-wrap' + (dense ? " dense" : "") + '" id="cstage" style="--r:' + radius + 'px">' + sats +
-    '<button class="orb-pill" id="ctoggle" aria-label="Respond"><span class="dot" style="background:' + color + '"></span><b>' + first + "</b></button>" +
+    '<button class="orb-toggle" id="ctoggle" aria-label="React and more">' + enso + tchev + "</button>" +
     hint + "</div>";
 }
 function relatedHtml(related) {
@@ -485,11 +486,31 @@ async function viewDetail(id, editing) {
   if (stage && ctoggle) {
     ctoggle.onclick = () => {
       const open = stage.classList.toggle("open");
-      ctoggle.setAttribute("aria-label", open ? "Close" : "Respond");
+      ctoggle.setAttribute("aria-label", open ? "Close" : "React and more");
       const hint = $("#orbhint");
       if (hint) hint.remove();
       try { localStorage.setItem("abba_orb_seen", "1"); } catch (e) { /* private mode */ }
     };
+    /* first-visit auto-peek: bloom the fan once so the gesture is learned, then settle */
+    try {
+      const seen = localStorage.getItem("abba_orb_seen");
+      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!seen && !reduce) {
+        localStorage.setItem("abba_orb_seen", "1");
+        setTimeout(() => {
+          if (!document.body.contains(stage)) return;
+          stage.classList.add("open");
+          ctoggle.setAttribute("aria-label", "Close");
+        }, 700);
+        setTimeout(() => {
+          if (!document.body.contains(stage)) return;
+          stage.classList.remove("open");
+          ctoggle.setAttribute("aria-label", "React and more");
+          const hint = $("#orbhint");
+          if (hint) hint.remove();
+        }, 2100);
+      }
+    } catch (e) { /* private mode */ }
     app.querySelectorAll(".c-item").forEach(b => b.onclick = async () => {
       const kind = b.dataset.ck, key = b.dataset.ckey;
       try {
