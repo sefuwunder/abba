@@ -362,6 +362,7 @@ let convoState = { id: null, open: false };
 function convoOpen() { return convoState.open; }
 function commentsHtml(note, open) {
   const n = note.comments.length;
+  if (!n && !note.shared) return "";
   const label = n ? n + (n === 1 ? " thought" : " thoughts") : "Start the conversation";
   let body = "";
   if (open) {
