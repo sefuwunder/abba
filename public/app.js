@@ -740,7 +740,11 @@ async function viewWelcome() {
       <div class="btn-row"><button class="btn btn-primary" id="w-r-go">Re-open my account</button></div>
       <p class="sub" style="margin:10px 0 0">Works on this Abba, or anywhere your account reached through mesh sync.</p>
     </div>
-    ${hasCircle ? "" : `
+    ${hasCircle ? `
+    <div class="card" style="text-align:left;margin-top:14px">
+      <div class="eyebrow" style="margin-top:0">Migrating from another circle?</div>
+      <p class="sub" style="margin:0">Importing starts a brand-new circle, and this Abba already has one — reset it first (owner · Circle → Danger zone), or import your bundle on a fresh Abba.</p>
+    </div>` : `
     <div class="card" style="text-align:left;margin-top:14px">
       <div class="eyebrow" style="margin-top:0">Migrating from another circle?</div>
       <p class="sub" style="margin:0 0 10px">Import your migration bundle — you become host of a fresh circle with your notes, links, and comments.</p>
