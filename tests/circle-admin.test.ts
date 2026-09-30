@@ -249,21 +249,33 @@ describe("fresh-start", () => {
     await api(F_PORT, "/api/notes", { method: "POST", ...auth(r.token), body: JSON.stringify({ body: "old note", shared: true }) });
   }, 60000);
 
-  test("recovery hatch: no token works when nobody set a secret", async () => {
+  test("recovery hatch: no token works when the owner never set a secret", async () => {
     const before = await api(F_PORT, "/api/mesh/invite", { method: "POST", ...auth((globalThis as any).__freshOwner) });
     const d = await freshStart({ name: "New Dawn", ownerName: "June" });
     expect(d.member.role).toBe("owner");
-    expect(d.member.name).toBe("June");
     expect(d.circle.name).toBe("New Dawn");
     (globalThis as any).__freshOwner = d.token;
-    // old data gone, new identity minted
     const notes = await api(F_PORT, "/api/notes?scope=mine", auth(d.token));
     expect(notes.notes.length).toBe(0);
     const after = await api(F_PORT, "/api/mesh/invite", { method: "POST", ...auth(d.token) });
     expect(nodeIdOf(after.code)).not.toBe(nodeIdOf(before.code));
   });
 
-  test("locked once a secret exists: no token -> 403", async () => {
+  test("a member's secret doesn't close the owner's recovery hatch", async () => {
+    const tok = (globalThis as any).__freshOwner; // secretless owner of "New Dawn"
+    const circle = await api(F_PORT, "/api/circle", auth(tok));
+    const m = await api(F_PORT, "/api/join", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: circle.inviteCode, name: "Pip" }),
+    });
+    await api(F_PORT, "/api/account/password", { method: "POST", ...auth(m.token), body: JSON.stringify({ password: "pip secret" }) });
+    const d = await freshStart({ name: "Fourth", ownerName: "June" });
+    expect(d.circle.name).toBe("Fourth");
+    expect(d.member.role).toBe("owner");
+    (globalThis as any).__freshOwner = d.token;
+  });
+
+  test("locked once the owner has a secret: no token -> 403", async () => {
     const tok = (globalThis as any).__freshOwner;
     await api(F_PORT, "/api/account/password", { method: "POST", ...auth(tok), body: JSON.stringify({ password: "june secret" }) });
     try {
@@ -272,10 +284,10 @@ describe("fresh-start", () => {
     } catch (e: any) { expect(String(e.message)).toContain("owner"); }
   });
 
-  test("owner token still works after secrets exist", async () => {
+  test("owner token still works after the hatch closes", async () => {
     const tok = (globalThis as any).__freshOwner;
-    const d = await freshStart({ name: "Third", ownerName: "June" }, tok);
-    expect(d.circle.name).toBe("Third");
+    const d = await freshStart({ name: "Fifth", ownerName: "June" }, tok);
+    expect(d.circle.name).toBe("Fifth");
     expect(d.member.role).toBe("owner");
   });
 });

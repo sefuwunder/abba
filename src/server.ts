@@ -186,16 +186,16 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // public: start a brand new circle from the welcome page (reset + init atomically).
-  // Owner-only — except on pre-secrets instances where no member has a password
-  // hash, in which case nobody can prove ownership and the wipe is the recovery path.
+  // Owner-only — except when the owner never set a secret (pre-secrets accounts),
+  // in which case nobody can prove ownership and the wipe is the recovery path.
   if (req.method === "POST" && path === "/api/circle/fresh-start") {
     const b = await body(req);
     const name = String(b.name || "The Circle").slice(0, 60);
     const ownerName = String(b.ownerName || "You").slice(0, 40);
     const caller = memberFrom(req);
     if (!caller || caller.role !== "owner") {
-      const anySecret = db.query("SELECT 1 FROM members WHERE password_hash IS NOT NULL AND password_hash != ''").get();
-      if (anySecret) return err("Only the circle's owner can do that.", 403);
+      const ownerSecret = db.query("SELECT 1 FROM members WHERE role = 'owner' AND password_hash IS NOT NULL AND password_hash != ''").get();
+      if (ownerSecret) return err("Only the circle's owner can do that.", 403);
     }
     resetAbba(db, getMesh());
     const code = randomInviteCode();

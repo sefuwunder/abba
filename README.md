@@ -97,10 +97,10 @@ Unlike burn, no tombstones go out; peered copies simply keep what they already
 synced.
 
 **Starting over from the welcome screen:** "Or start a brand new circle"
-wipes and restarts in one step. It's owner-only — except on pre-secrets
-instances where no member ever set a password hash: there nobody can prove
-ownership, so the wipe itself is the recovery path (it locks again as soon as
-anyone sets a secret).
+wipes and restarts in one step. It's owner-only — except when the owner never
+set a secret (pre-secrets accounts): then nobody can prove ownership, so the
+wipe itself is the recovery path (it locks again as soon as the new owner sets
+one).
 
 ## Forking as a non-host (migrate to your own circle)
 
