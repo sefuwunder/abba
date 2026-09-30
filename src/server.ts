@@ -90,11 +90,28 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === "GET" && (path === "/" || path === "/index.html")) {
     const dir = `${import.meta.dir}/../public`;
     let v = 0;
-    for (const f of ["app.js", "styles.css", "index.html"]) {
+    for (const f of ["app.js", "styles.css", "index.html", "sw.js", "manifest.webmanifest",
+                     "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]) {
       try { v = Math.max(v, Bun.file(`${dir}/${f}`).lastModified); } catch { /* ignore */ }
     }
     const html = (await Bun.file(`${dir}/index.html`).text()).replaceAll("__V__", String(Math.floor(v / 1000)));
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
+  // service worker — version-stamped so deploys bust its cache name
+  if (req.method === "GET" && path === "/sw.js") {
+    const dir = `${import.meta.dir}/../public`;
+    let v = 0;
+    for (const f of ["app.js", "styles.css", "sw.js"]) {
+      try { v = Math.max(v, Bun.file(`${dir}/${f}`).lastModified); } catch { /* ignore */ }
+    }
+    const js = (await Bun.file(`${dir}/sw.js`).text()).replaceAll("__V__", String(Math.floor(v / 1000)));
+    return new Response(js, { headers: { "Content-Type": "text/javascript", "Cache-Control": "no-cache" } });
+  }
+  if (req.method === "GET" && path === "/manifest.webmanifest")
+    return new Response(Bun.file(`${import.meta.dir}/../public/manifest.webmanifest`), { headers: { "Content-Type": "application/manifest+json" } });
+  for (const icon of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]) {
+    if (req.method === "GET" && path === "/" + icon)
+      return new Response(Bun.file(`${import.meta.dir}/../public/${icon}`), { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=31536000, immutable" } });
   }
   if (req.method === "GET" && path === "/app.js")
     return new Response(Bun.file(`${import.meta.dir}/../public/app.js`), { headers: { "Content-Type": "text/javascript" } });

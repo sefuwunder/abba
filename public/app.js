@@ -658,6 +658,9 @@ async function viewMembers() {
         <input id="acc-pass" type="password" placeholder="new secret (4+ characters)" style="flex:1;min-width:0" autocomplete="new-password">
         <button class="btn btn-primary" id="acc-set">Set secret</button>
       </div>
+      <div class="btn-row" id="install-row" style="display:none;margin-top:10px">
+        <button class="btn btn-ghost" id="acc-install">Install Abba on this device</button>
+      </div>
     </div>
     ${isOwner ? `
     <p class="section-label danger">Danger zone</p>
@@ -696,6 +699,23 @@ async function viewMembers() {
       state.me.hasPassword = true;
       viewMembers();
     } catch (e) { toast(e.message); }
+  };
+  // PWA install: the row appears only when the browser offers installation
+  const showInstall = () => {
+    const row = $("#install-row");
+    if (row && window.__deferredInstall) row.style.display = "";
+  };
+  window.addEventListener("abba:installable", showInstall);
+  showInstall();
+  const instBtn = $("#acc-install");
+  if (instBtn) instBtn.onclick = async () => {
+    const p = window.__deferredInstall;
+    if (!p) return;
+    window.__deferredInstall = null;
+    const row = $("#install-row");
+    if (row) row.style.display = "none";
+    p.prompt();
+    try { await p.userChoice; } catch {}
   };
   const mig = $("#circ-migrate");
   if (mig) mig.onclick = async () => {

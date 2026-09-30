@@ -7,6 +7,12 @@
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#161210">
 <title>Abba — a quiet notepad for you and your circle</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Abba">
 <link rel="stylesheet" href="/styles.css?v=__V__">
 </head>
 <body>
@@ -14,5 +20,19 @@
 <nav id="tabbar" hidden></nav>
 <div id="toast" role="status"></div>
 <script src="/app.js?v=__V__"></script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js").catch(function () {});
+  });
+}
+// PWA install prompt, captured for the Circle view's install button
+window.__deferredInstall = null;
+window.addEventListener("beforeinstallprompt", function (e) {
+  e.preventDefault();
+  window.__deferredInstall = e;
+  window.dispatchEvent(new CustomEvent("abba:installable"));
+});
+</script>
 </body>
 </html>

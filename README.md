@@ -20,6 +20,12 @@ bun src/server.ts
 
 Open `http://localhost:3013` — start a circle (you're the owner), share the invite code, and your circle joins by name. No passwords; the circle is intimate by design.
 
+Abba is a PWA: over HTTPS it installs to the home screen / desktop
+(manifest + service worker + icons ship with the app). The service worker
+caches only the app shell — every `/api/*` request always hits the network,
+so installed Abba never serves stale circle data. An "Install Abba on this
+device" button appears in Circle → Account when the browser offers it.
+
 ## What it does
 
 Modeled after Apple Notes — folders, large titles, hairlines, quiet yellow:
