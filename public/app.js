@@ -715,6 +715,7 @@ async function renderMeshCard(isOwner) {
 async function viewWelcome() {
   tabbar.hidden = true;
   const hasCircle = await api("/api/status").then(d => d.hasCircle).catch(() => false);
+  const ownerHere = !!(state.me && state.me.role === "owner");
   app.innerHTML = `<div class="welcome">
     <div class="mark">◯</div>
     <h1>Abba</h1>
@@ -733,6 +734,17 @@ async function viewWelcome() {
       <div class="btn-row"><button class="btn btn-primary" id="w-go">${hasCircle ? "Join the circle" : "Start our circle"}</button></div>
     </div>
     ${hasCircle ? `<p class="sub" style="margin-top:14px"><a href="#" id="w-reopen-link" style="color:var(--terra-deep)">Lost your sign-in? Re-open with a secret</a></p>` : ""}
+    ${hasCircle ? `<p class="sub" style="margin-top:10px"><a href="#" id="w-fresh-link" style="color:#B0442F">Or start a brand new circle</a></p>` : ""}
+    <div class="card" id="w-fresh-card" style="display:none;text-align:left">
+      <div class="eyebrow" style="margin-top:0;color:#B0442F">Brand new circle</div>
+      <p class="sub" style="margin:0 0 10px">This wipes the current circle — notes, members, identity — and starts over. There's no undo.</p>
+      <div class="field"><label>New circle's name</label><input id="w-f-circle" placeholder="e.g. The Corner Table" maxlength="60"></div>
+      <div class="field"><label>Your name</label><input id="w-f-name" placeholder="What should the circle call you?" maxlength="40"></div>
+      ${ownerHere ? "" : `
+      <div class="field"><label>Current owner's name</label><input id="w-f-owner" placeholder="The name the circle knows them by" maxlength="40"></div>
+      <div class="field"><label>Owner's secret</label><input id="w-f-pass" type="password" placeholder="Their secret phrase" autocomplete="current-password"></div>`}
+      <div class="btn-row"><button class="btn btn-ghost" id="w-f-go" style="color:#B0442F;border-color:#E3B7A9">Wipe and start fresh</button></div>
+    </div>
     <div class="card" id="w-reopen-card" style="display:none;text-align:left">
       <div class="eyebrow" style="margin-top:0">Re-open your account</div>
       <div class="field"><label>Your name</label><input id="w-r-name" placeholder="The name the circle knows you by" maxlength="40"></div>
@@ -769,6 +781,37 @@ async function viewWelcome() {
       const data = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: name.trim(), password }) });
       localStorage.setItem("abba_token", data.token);
       toast(data.fromMesh ? "Account restored from the mesh. Welcome back." : "Welcome back.");
+      location.hash = "#/folders";
+      await boot(true);
+    } catch (e) { toast(e.message); }
+  };
+  const fl = $("#w-fresh-link");
+  if (fl) fl.onclick = (e) => {
+    e.preventDefault();
+    const c = $("#w-fresh-card");
+    if (c) c.style.display = c.style.display === "none" ? "" : "none";
+  };
+  const fgo = $("#w-f-go");
+  if (fgo) fgo.onclick = async () => {
+    const circleName = (($("#w-f-circle") || {}).value || "").trim();
+    const ownerName = ($("#w-f-name") || {}).value || "";
+    if (!circleName || !ownerName.trim()) { toast("Name the circle and yourself."); return; }
+    if (!confirm("Wipe this Abba completely and start \"" + circleName + "\"? There's no undo.")) return;
+    try {
+      if (!(state.me && state.me.role === "owner")) {
+        const on = (($("#w-f-owner") || {}).value || "").trim();
+        const op = (($("#w-f-pass") || {}).value || "");
+        if (!on || !op) { toast("The current owner's name and secret are needed."); return; }
+        const ro = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: on, password: op }) });
+        if (ro.member.role !== "owner") { toast("Only the owner can start a brand new circle."); return; }
+        localStorage.setItem("abba_token", ro.token);
+      }
+      await api("/api/circle/reset", { method: "POST" });
+      const init = await api("/api/circle/init", {
+        method: "POST", body: JSON.stringify({ name: circleName, ownerName: ownerName.trim() }),
+      });
+      localStorage.setItem("abba_token", init.token);
+      toast("Fresh circle, fresh start.");
       location.hash = "#/folders";
       await boot(true);
     } catch (e) { toast(e.message); }
