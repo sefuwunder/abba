@@ -1,5 +1,6 @@
 /* Abba — paper & ink. Muted terracotta for warmth; nothing shouts. */
 :root {
+  color-scheme: light dark;
   --paper: #FAF6F1;
   --card: #FFFDF9;
   --ink: #221A12;
@@ -13,6 +14,11 @@
   --gold: #B98F2B;
   --sage: #5F8F5A;           /* "here now" green */
   --folder: #EBCB5E;
+  --danger: #B0442F;
+  --danger-line: #E3B7A9;
+  --nudge-bg: #FDF3E7;
+  --nudge-line: #EBD9BE;
+  --nudge-ink: #6B5233;
   --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --radius: 14px;
@@ -62,7 +68,9 @@ a { color: var(--terra-deep); }
 .btn-primary:hover { background: var(--terra-deep); }
 .btn-ghost { background: transparent; color: var(--terra-deep); border: 1px solid var(--line); }
 .btn-quiet { background: transparent; color: var(--soft); padding: 8px 12px; font-weight: 500; }
-.btn-danger { background: transparent; color: #A4442F; border: 1px solid #EAC9BC; }
+.btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger-line); }
+.text-danger { color: var(--danger); }
+.section-label.danger { color: var(--danger); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
@@ -70,15 +78,15 @@ a { color: var(--terra-deep); }
 .field label { display: block; font-size: 13px; color: var(--soft); margin-bottom: 6px; }
 .field input, .field select {
   width: 100%; padding: 12px 14px; font-size: 16px; font-family: var(--sans);
-  border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink);
 }
 .field input:focus { outline: 2px solid var(--terra-wash); border-color: var(--terra); }
 
 /* ---- nudges: small, kind, dismissible ---- */
 .nudge {
   display: flex; gap: 10px; align-items: flex-start;
-  background: #FDF3E7; border: 1px solid #EBD9BE; border-radius: var(--radius);
-  padding: 12px 14px; margin-bottom: 10px; font-size: 14px; color: #6B5233;
+  background: var(--nudge-bg); border: 1px solid var(--nudge-line); border-radius: var(--radius);
+  padding: 12px 14px; margin-bottom: 10px; font-size: 14px; color: var(--nudge-ink);
 }
 .nudge .x { margin-left: auto; background: none; border: none; color: var(--faint); font-size: 16px; cursor: pointer; padding: 0 0 0 8px; }
 .nudge .go { color: var(--terra-deep); font-weight: 600; background: none; border: none; cursor: pointer; padding: 0; font-size: 14px; }
@@ -126,7 +134,7 @@ a { color: var(--terra-deep); }
 .comment .who { font-size: 13px; color: var(--soft); display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
 .comment p { margin: 0; font-size: 15px; }
 .comment-box { display: flex; gap: 8px; margin-top: 12px; }
-.comment-box input { flex: 1; padding: 11px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 15px; background: #fff; }
+.comment-box input { flex: 1; padding: 11px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 15px; background: var(--card); }
 .comment-box input:focus { outline: 2px solid var(--terra-wash); border-color: var(--terra); }
 .related-row { display: flex; flex-direction: column; gap: 8px; }
 .related-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 4px; border-top: 1px solid var(--line); font-size: 15px; cursor: pointer; }
@@ -189,7 +197,7 @@ a { color: var(--terra-deep); }
 
 .editor textarea {
   width: 100%; min-height: 220px; border: 1px solid var(--line); border-radius: 10px;
-  padding: 14px; font-family: var(--serif); font-size: 17px; line-height: 1.65; background: #fff; color: var(--ink);
+  padding: 14px; font-family: var(--serif); font-size: 17px; line-height: 1.65; background: var(--card); color: var(--ink);
 }
 .editor textarea:focus { outline: 2px solid var(--terra-wash); border-color: var(--terra); }
 .toolbar { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
@@ -387,7 +395,7 @@ a { color: var(--terra-deep); }
 /* ---- account ---- */
 #acc-pass {
   padding: 10px 12px; font-size: 15px; font-family: var(--sans);
-  border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink);
 }
 #acc-pass:focus { outline: 2px solid var(--terra-wash); border-color: var(--terra); }
 
@@ -396,4 +404,47 @@ a { color: var(--terra-deep); }
   display: inline-block; font-size: 12.5px; color: var(--terra-deep);
   background: var(--terra-wash); border-radius: 999px; padding: 6px 13px;
   margin: 2px 0 0; font-weight: 600;
+}
+
+/* ---- auto dark mode: warm charcoal, same gold soul ---- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #161210;
+    --card: #201A14;
+    --ink: #EDE4D3;
+    --soft: #B2A48D;
+    --faint: #7E7261;
+    --line: #2F2721;
+    --hairline: #29201A;
+    --terra: #D9A441;
+    --terra-deep: #E5B95E;
+    --terra-wash: #2B2314;
+    --gold: #D9A441;
+    --sage: #83B57E;
+    --danger: #E0805F;
+    --danger-line: #5C3A2E;
+    --nudge-bg: #2A2114;
+    --nudge-line: #4A3A22;
+    --nudge-ink: #D8C096;
+  }
+  /* gold buttons need dark text on the brighter gold */
+  .btn-primary { color: #1A140E; }
+  /* status pills */
+  .pill.seed { background: #2E2A24; color: #A89A87; }
+  .pill.sprout { background: #243024; color: #8FB086; }
+  .pill.decided { background: #33291A; color: #D9A441; }
+  .pill.resting { background: #262626; color: #8A8A8A; }
+  /* surfaces that were hardcoded light */
+  .search { background: #2A231B; }
+  .frow:active, .nrow:active { background: #2A231B; }
+  .idea-body code, .reader code { background: #2E2620; color: #EDE4D3; }
+  .title-input::placeholder, .body-input::placeholder, .tags-input::placeholder { color: #6E6257; }
+  .chev { color: #6E6257; }
+  /* already-dark cards stay deep */
+  .invite-card { background: #100D0A; }
+  .idea-body pre, .reader pre { background: #100D0A; }
+  /* tab bar */
+  #tabbar { background: rgba(22, 18, 16, 0.94); }
+  /* gold surfaces need dark glyphs on the brighter gold */
+  .fab, .orb-wrap .c-badge { color: #1A140E; }
 }

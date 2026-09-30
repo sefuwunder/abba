@@ -563,16 +563,16 @@ async function viewMembers() {
       </div>
     </div>
     ${isOwner ? `
-    <p class="section-label" style="color:#B0442F">Danger zone</p>
+    <p class="section-label danger">Danger zone</p>
     <div class="card">
       <p class="sub" style="margin:0 0 10px">Migrate moves this circle's content — your notes and shared notes — into a fresh, empty circle with a new invite code. Everyone but you starts over.</p>
       <div class="btn-row"><button class="btn btn-ghost" id="circ-migrate">Migrate to new circle</button></div>
       <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
       <p class="sub" style="margin:0 0 10px">Burning destroys the circle on this Abba — members, notes, everything. Peered instances are told to drop shared notes. This can't be undone.</p>
-      <div class="btn-row"><button class="btn btn-ghost" id="circ-burn" style="color:#B0442F;border-color:#E3B7A9">Burn circle</button></div>
+      <div class="btn-row"><button class="btn btn-ghost btn-danger" id="circ-burn">Burn circle</button></div>
       <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
       <p class="sub" style="margin:0 0 10px">Reset wipes everything — circle, notes, members, and this Abba's identity — and starts over as a fresh install. Peered copies keep what they already synced.</p>
-      <div class="btn-row"><button class="btn btn-ghost" id="circ-reset" style="color:#B0442F;border-color:#E3B7A9">Reset Abba</button></div>
+      <div class="btn-row"><button class="btn btn-ghost btn-danger" id="circ-reset">Reset Abba</button></div>
     </div>` : `
     <p class="section-label">Your own circle</p>
     <div class="card">
@@ -734,16 +734,16 @@ async function viewWelcome() {
       <div class="btn-row"><button class="btn btn-primary" id="w-go">${hasCircle ? "Join the circle" : "Start our circle"}</button></div>
     </div>
     ${hasCircle ? `<p class="sub" style="margin-top:14px"><a href="#" id="w-reopen-link" style="color:var(--terra-deep)">Lost your sign-in? Re-open with a secret</a></p>` : ""}
-    ${hasCircle ? `<p class="sub" style="margin-top:10px"><a href="#" id="w-fresh-link" style="color:#B0442F">Or start a brand new circle</a></p>` : ""}
+    ${hasCircle ? `<p class="sub" style="margin-top:10px"><a href="#" id="w-fresh-link" class="text-danger">Or start a brand new circle</a></p>` : ""}
     <div class="card" id="w-fresh-card" style="display:none;text-align:left">
-      <div class="eyebrow" style="margin-top:0;color:#B0442F">Brand new circle</div>
+      <div class="eyebrow text-danger" style="margin-top:0">Brand new circle</div>
       <p class="sub" style="margin:0 0 10px">This wipes the current circle — notes, members, identity — and starts over. There's no undo.</p>
       <div class="field"><label>New circle's name</label><input id="w-f-circle" placeholder="e.g. The Corner Table" maxlength="60"></div>
       <div class="field"><label>Your name</label><input id="w-f-name" placeholder="What should the circle call you?" maxlength="40"></div>
       ${ownerHere ? "" : `
       <div class="field"><label>Current owner's name (if they set a secret)</label><input id="w-f-owner" placeholder="The name the circle knows them by" maxlength="40"></div>
       <div class="field"><label>Owner's secret (if set)</label><input id="w-f-pass" type="password" placeholder="Their secret phrase" autocomplete="current-password"></div>`}
-      <div class="btn-row"><button class="btn btn-ghost" id="w-f-go" style="color:#B0442F;border-color:#E3B7A9">Wipe and start fresh</button></div>
+      <div class="btn-row"><button class="btn btn-ghost btn-danger" id="w-f-go">Wipe and start fresh</button></div>
     </div>
     <div class="card" id="w-reopen-card" style="display:none;text-align:left">
       <div class="eyebrow" style="margin-top:0">Re-open your account</div>
