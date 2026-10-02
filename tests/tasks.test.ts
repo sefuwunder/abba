@@ -1,6 +1,6 @@
 // Abba smart folders: task parsing, toggling, and checkbox rendering.
 // Loads public/app.js in a DOM stub (boot() stripped — no network).
-import { describe, test, expect, beforeAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -18,6 +18,12 @@ function makeEl(): any {
 }
 
 let taskStats: any, toggleTask: any, md: any;
+// bun shares globalThis across test files: save the originals and restore
+// them afterwards so later files keep the real fetch/localStorage.
+const ORIGINALS: Record<string, any> = {};
+for (const k of ["window", "location", "document", "localStorage", "fetch", "navigator"]) {
+  ORIGINALS[k] = (globalThis as any)[k];
+}
 
 beforeAll(() => {
   const g: any = globalThis as any;
@@ -42,6 +48,12 @@ beforeAll(() => {
   js = js.replace(/\nboot\(\);?\s*$/, ""); // don't boot; test pure functions
   eval(js + "\n;globalThis.__abbaTasks = { taskStats, toggleTask, md };");
   ({ taskStats, toggleTask, md } = g.__abbaTasks);
+  delete g.__abbaTasks;
+});
+
+afterAll(() => {
+  const g: any = globalThis as any;
+  for (const k of Object.keys(ORIGINALS)) g[k] = ORIGINALS[k];
 });
 
 describe("taskStats", () => {
