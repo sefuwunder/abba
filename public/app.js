@@ -6,6 +6,39 @@ const $ = (s, el) => (el || document).querySelector(s);
 const app = $("#app"), tabbar = $("#tabbar"), toastEl = $("#toast");
 const state = { me: null, circle: null, filter: "", here: [] };
 
+/* ---------- tasks: markdown checklists drive the smart folders ---------- */
+const TASK_RE = /^(\s*[-*]\s+)\[([ xX])\](\s+.*)$/;
+function taskStats(body) {
+  const lines = String(body || "").split("\n");
+  let total = 0, open = 0, inPre = false;
+  for (const raw of lines) {
+    if (/^```/.test(raw)) { inPre = !inPre; continue; }
+    if (inPre) continue;
+    const m = raw.match(TASK_RE);
+    if (m) { total++; if (m[2] === " ") open++; }
+  }
+  return { total, open, done: total - open };
+}
+/** Flip the nth checklist item in a body. Returns the new body. */
+function toggleTask(body, idx) {
+  const lines = String(body || "").split("\n");
+  let n = -1, inPre = false;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    if (/^```/.test(raw)) { inPre = !inPre; continue; }
+    if (inPre) continue;
+    const m = raw.match(TASK_RE);
+    if (m) {
+      n++;
+      if (n === idx) {
+        lines[i] = m[1] + "[" + (m[2] === " " ? "x" : " ") + "]" + m[3];
+        break;
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
 /* ---------- tiny markdown ---------- */
 function esc(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -21,7 +54,7 @@ function inline(s) {
 }
 function md(src) {
   const lines = String(src || "").split("\n");
-  let html = "", inUl = false, inOl = false, inPre = false, inMer = false, para = [];
+  let html = "", inUl = false, inOl = false, inPre = false, inMer = false, para = [], taskIdx = 0;
   const flushPara = () => { if (para.length) { html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
   const closeLists = () => { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } };
   for (const raw of lines) {
@@ -39,6 +72,12 @@ function md(src) {
     if ((m = line.match(/^(#{1,3})\s+(.*)/))) { flushPara(); closeLists(); html += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`; continue; }
     if (/^---+$/.test(line.trim())) { flushPara(); closeLists(); html += "<hr>"; continue; }
     if ((m = line.match(/^>\s?(.*)/))) { flushPara(); closeLists(); html += `<blockquote>${inline(m[1])}</blockquote>`; continue; }
+    if ((m = line.match(/^\s*[-*]\s+\[([ xX])\]\s+(.*)/))) {
+      flushPara(); if (inOl) { html += "</ol>"; inOl = false; } if (!inUl) { html += "<ul>"; inUl = true; }
+      const checked = m[1] !== " ", ti = taskIdx++;
+      html += `<li class="task"><button class="cbox${checked ? " on" : ""}" data-task="${ti}" aria-label="${checked ? "Reopen task" : "Complete task"}">${checked ? "✓" : ""}</button><span>${inline(m[2])}</span></li>`;
+      continue;
+    }
     if ((m = line.match(/^\s*[-*]\s+(.*)/))) { flushPara(); if (inOl) { html += "</ol>"; inOl = false; } if (!inUl) { html += "<ul>"; inUl = true; } html += `<li>${inline(m[1])}</li>`; continue; }
     if ((m = line.match(/^\s*\d+\.\s+(.*)/))) { flushPara(); if (inUl) { html += "</ul>"; inUl = false; } if (!inOl) { html += "<ol>"; inOl = true; } html += `<li>${inline(m[1])}</li>`; continue; }
     para.push(line);
@@ -202,6 +241,10 @@ async function viewFolders() {
     api("/api/digests").then(d => d.digests).catch(() => []),
   ]);
   const first = esc(state.me.name.split(" ")[0]);
+  const smart = mine.map(n => ({ n, st: taskStats(n.body) }));
+  const openNotes = smart.filter(t => t.st.total > 0 && t.st.open > 0);
+  const doneNotes = smart.filter(t => t.st.total > 0 && t.st.open === 0);
+  const openItems = openNotes.reduce((a, t) => a + t.st.open, 0);
   app.innerHTML = `
     <h1 class="large-greet">${greeting()},<br>${first}.</h1>
     <div id="nudges">${nudgeHtml(nudges)}</div>
@@ -213,6 +256,13 @@ async function viewFolders() {
         <span class="frow-name">The Circle</span><span class="frow-count">${circle.length}</span><span class="chev">›</span></div>
       <div class="frow" data-go="#/list/letters">${folderSvg("letters")}
         <span class="frow-name">Weekly Letters</span><span class="frow-count">${letters.length}</span><span class="chev">›</span></div>
+    </div>
+    <p class="section-label">Smart folders</p>
+    <div class="group">
+      <div class="frow" data-go="#/list/smart-open"><span class="frow-ic">◔</span>
+        <span class="frow-name">Open tasks</span><span class="frow-count">${openNotes.length ? openNotes.length + " notes · " + openItems + " open" : ""}</span><span class="chev">›</span></div>
+      <div class="frow" data-go="#/list/smart-done"><span class="frow-ic">✓</span>
+        <span class="frow-name">All done</span><span class="frow-count">${doneNotes.length || ""}</span><span class="chev">›</span></div>
     </div>
     <p class="section-label">Circle</p>
     <div class="group">
@@ -230,7 +280,10 @@ const FOLDER_META = {
   mine: { title: "My Notepad", back: "Folders", compose: true },
   circle: { title: "The Circle", back: "Folders", compose: true },
   letters: { title: "Weekly Letters", back: "Folders", compose: false },
+  "smart-open": { title: "Open tasks", back: "Folders", compose: false },
+  "smart-done": { title: "All done", back: "Folders", compose: false },
 };
+const SMART_KINDS = { "smart-open": true, "smart-done": true };
 async function viewList(kind) {
   renderTabs("notes");
   const meta = FOLDER_META[kind] || FOLDER_META.mine;
@@ -238,6 +291,11 @@ async function viewList(kind) {
   if (kind === "letters") {
     const { digests } = await api("/api/digests").catch(() => ({ digests: [] }));
     items = digests.map(d => ({ kind: "letter", id: d.weekKey, weekKey: d.weekKey }));
+  } else if (SMART_KINDS[kind]) {
+    const { notes } = await api("/api/notes?scope=mine").catch(() => ({ notes: [] }));
+    items = notes
+      .map(n => ({ kind: "note", id: n.id, note: n, st: taskStats(n.body) }))
+      .filter(it => it.st.total > 0 && (kind === "smart-open" ? it.st.open > 0 : it.st.open === 0));
   } else {
     const scope = kind === "mine" ? "mine" : "circle";
     const { notes } = await api("/api/notes?scope=" + scope).catch(() => ({ notes: [] }));
@@ -255,7 +313,12 @@ async function viewList(kind) {
       return (it.note.title + " " + it.note.body).toLowerCase().includes(query);
     });
     if (!list.length) {
-      return `<div class="empty-state">${query ? "Nothing matches “" + esc(q.trim()) + "”." : kind === "letters" ? "No letters yet.<br>The first one arrives Monday." : "Nothing here yet."}</div>`;
+      const empty = query ? "Nothing matches “" + esc(q.trim()) + "”."
+        : kind === "letters" ? "No letters yet.<br>The first one arrives Monday."
+        : kind === "smart-open" ? "No open tasks.<br>Enjoy the clear desk."
+        : kind === "smart-done" ? "Nothing finished yet.<br>Tick off a task and it lands here."
+        : "Nothing here yet.";
+      return `<div class="empty-state">${empty}</div>`;
     }
     return list.map(it => {
       if (it.kind === "letter") {
@@ -265,9 +328,12 @@ async function viewList(kind) {
           <div class="nr-sub">${esc(weekRangeLabel(it.weekKey))}</div></div>`;
       }
       const n = it.note;
+      const sub = SMART_KINDS[kind] && it.st
+        ? `${it.st.done}/${it.st.total} done · ${relTime(n.updatedAt)}`
+        : `${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}`;
       return `<div class="nrow" data-note="${n.id}">
         <div class="nr-title">${n.link ? "🔗 " : ""}${esc(n.title)}</div>
-        <div class="nr-sub">${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}</div></div>`;
+        <div class="nr-sub">${sub}</div></div>`;
     }).join("");
   };
   app.innerHTML = `
@@ -464,6 +530,7 @@ function editorHtml(note) {
     '<div class="toolbar">' +
     '<button class="tool" data-md="**bold**">B</button><button class="tool" data-md="*italic*">I</button>' +
     '<button class="tool" data-md="## ">H</button><button class="tool" data-md="- ">• List</button>' +
+    '<button class="tool" data-md="- [ ] ">☐ Task</button>' +
     '<button class="tool" data-md="> ">❝ Quote</button>' +
     "</div>" +
     '<textarea id="e-body" class="body-input">' + esc(note.body) + "</textarea>" +
@@ -531,6 +598,25 @@ async function viewDetail(id, editing) {
     return;
   }
   const stage = $("#cstage"), ctoggle = $("#ctoggle");
+  // task checkboxes: tap to flip the underlying "- [ ]" line (own notes only)
+  const bindTasks = () => {
+    app.querySelectorAll(".reader .cbox").forEach(b => {
+      b.onclick = async (e) => {
+        e.preventDefault();
+        if (!note.mine || note.link) return;
+        const body = toggleTask(note.body, Number(b.dataset.task));
+        if (body === note.body) return;
+        b.disabled = true;
+        try {
+          const d = await api("/api/notes/" + note.id, { method: "PATCH", body: JSON.stringify({ body }) });
+          note.body = d.note.body;
+          const reader = app.querySelector(".reader");
+          if (reader) { reader.innerHTML = md(note.body); bindTasks(); }
+        } catch (err) { toast(err.message); b.disabled = false; }
+      };
+    });
+  };
+  bindTasks();
   if (stage && ctoggle) {
     ctoggle.onclick = () => {
       const open = stage.classList.toggle("open");
