@@ -110,20 +110,3 @@ describe("md() checkbox rendering", () => {
   });
 });
 
-describe("smart folder filters", () => {
-  const notes = [
-    { id: 1, body: "- [ ] a" },
-    { id: 2, body: "- [x] a\n- [x] b" },
-    { id: 3, body: "no tasks" },
-  ];
-  const classify = (n: any) => {
-    const st = taskStats(n.body);
-    return st.total > 0 ? (st.open > 0 ? "open" : "done") : "none";
-  };
-  test("open folder holds notes with unchecked items", () => {
-    expect(notes.filter((n) => classify(n) === "open").map((n) => n.id)).toEqual([1]);
-  });
-  test("done folder holds fully-checked notes", () => {
-    expect(notes.filter((n) => classify(n) === "done").map((n) => n.id)).toEqual([2]);
-  });
-});

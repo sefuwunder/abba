@@ -242,3 +242,85 @@ export function dismissNudge(memberId: number, key: string): void {
   getDb().query("INSERT OR IGNORE INTO nudges_seen (member_id, nudge_key, created_at) VALUES (?, ?, ?)")
     .run(memberId, key, nowIso());
 }
+
+/* ---------- daily task letter ---------- */
+
+export interface TaskItem { text: string; done: boolean; }
+
+/** Parse markdown checklist items, skipping fenced code blocks. */
+export function parseTasks(body: string): TaskItem[] {
+  const out: TaskItem[] = [];
+  let inPre = false;
+  for (const raw of String(body || "").split("\n")) {
+    if (/^```/.test(raw)) { inPre = !inPre; continue; }
+    if (inPre) continue;
+    const m = raw.match(/^\s*[-*]\s+\[([ xX])\]\s+(.*)$/);
+    if (m) out.push({ text: m[2].trim().slice(0, 120), done: m[1] !== " " });
+  }
+  return out;
+}
+
+export interface DailyLetter {
+  dayKey: string;
+  title: string;
+  subtitle: string;
+  intro: string;
+  sections: DigestSection[];
+  empty: boolean;
+  emptyText: string;
+}
+
+const DAY_INTROS = [
+  "Your tasks, gathered in one place.",
+  "What's open, what's done — a quiet accounting.",
+  "The day's tasks, without the noise.",
+];
+
+function dayKey(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** The day's task intelligence as a personal letter: open tasks grouped by
+ *  note, plus notes wrapped up in the last 7 days. Composed fresh on read. */
+export function composeDailyLetter(memberId: number): DailyLetter {
+  const db = getDb();
+  const dk = dayKey();
+  const notes = db.query("SELECT * FROM notes WHERE member_id = ? ORDER BY updated_at DESC").all(memberId) as any[];
+  const withTasks = notes
+    .map((n) => ({ n, tasks: parseTasks(n.body) }))
+    .filter((x) => x.tasks.length > 0);
+  const open = withTasks.filter((x) => x.tasks.some((t) => !t.done));
+  const weekAgo = Date.now() - 7 * 864e5;
+  const done = withTasks.filter((x) =>
+    x.tasks.every((t) => t.done) && (Date.parse(x.n.updated_at) || 0) >= weekAgo);
+
+  const sections: DigestSection[] = [];
+  if (open.length) {
+    sections.push({
+      heading: "Still open",
+      lines: open.map((x) => {
+        const doneCount = x.tasks.filter((t) => t.done).length;
+        const items = x.tasks.filter((t) => !t.done).map((t) => t.text);
+        const shown = items.slice(0, 5).join(", ");
+        const more = items.length > 5 ? `, +${items.length - 5} more` : "";
+        return `**${x.n.title || "Untitled"}** · ${doneCount} of ${x.tasks.length} done — ${shown}${more}`;
+      }),
+    });
+  }
+  if (done.length) {
+    sections.push({
+      heading: "Wrapped up",
+      lines: done.map((x) => `**${x.n.title || "Untitled"}** · all ${x.tasks.length} done`),
+    });
+  }
+  return {
+    dayKey: dk,
+    title: "Today",
+    subtitle: new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }),
+    intro: DAY_INTROS[new Date().getDate() % DAY_INTROS.length],
+    sections,
+    empty: withTasks.length === 0,
+    emptyText: "No tasks on your plate.\nEnjoy the clear desk.",
+  };
+}

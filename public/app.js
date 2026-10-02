@@ -20,8 +20,7 @@ function taskStats(body) {
   return { total, open, done: total - open };
 }
 /** Flip the nth checklist item in a body. Returns the new body. */
-function toggleTask(body, idx) {
-  const lines = String(body || "").split("\n");
+function toggleTask(body, idx) {  const lines = String(body || "").split("\n");
   let n = -1, inPre = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -38,6 +37,61 @@ function toggleTask(body, idx) {
   }
   return lines.join("\n");
 }
+
+/* ---------- smart topic folders: max 3, from tags + content ---------- */
+/* Topics come from the member's tags. A note belongs to a topic when it
+ * carries the tag, mentions the tag word, or mentions one of the topic's
+ * signature words — the distinctive vocabulary of the tag's own notes.
+ * Ranked by how many notes gather round, recency breaks ties. */
+const STOPWORDS = new Set(("a,an,the,and,or,but,in,on,at,to,for,of,with,is,are,was,were,be,been,being," +
+  "have,has,had,do,does,did,will,would,should,could,this,that,these,those,it,its,as,by,from," +
+  "not,no,yes,if,then,than,so,such,into,out,up,down,over,under,again,once,here,there,when," +
+  "where,which,who,whom,what,how,all,any,both,each,few,more,most,other,some,only,own,same," +
+  "too,very,can,just,about,after,before,between,during,through,while,because,until,against,among,per,via").split(","));
+function sigWords(notes) {
+  const freq = new Map();
+  for (const n of notes) {
+    const words = ((n.title || "") + " " + (n.body || "")).toLowerCase().match(/[^\W_]{4,}/gu) || [];
+    for (const w of words) {
+      if (STOPWORDS.has(w)) continue;
+      freq.set(w, (freq.get(w) || 0) + 1);
+    }
+  }
+  return [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(e => e[0]);
+}
+function topicFolders(notes) {
+  const tagIds = new Map();
+  for (const n of notes) {
+    for (const t of (n.tags || [])) {
+      const tag = String(t).trim().toLowerCase();
+      if (!tag) continue;
+      if (!tagIds.has(tag)) tagIds.set(tag, new Set());
+      tagIds.get(tag).add(n.id);
+    }
+  }
+  const byId = new Map(notes.map(n => [n.id, n]));
+  const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const [tag, ids] of tagIds) {
+    const seeds = [...ids].map(id => byId.get(id)).filter(Boolean);
+    const patterns = [tag, ...sigWords(seeds).filter(w => w !== tag)]
+      .map(w => new RegExp(`\\b${escRe(w)}\\b`, "i"));
+    for (const n of notes) {
+      if (ids.has(n.id)) continue;
+      const text = (n.title || "") + "\n" + (n.body || "");
+      if (patterns.some(re => re.test(text))) ids.add(n.id);
+    }
+  }
+  return [...tagIds.entries()]
+    .map(([tag, ids]) => {
+      const ns = [...ids].map(id => byId.get(id)).filter(Boolean);
+      const recent = ns.reduce((a, n) => Math.max(a, Date.parse(n.updatedAt) || 0), 0);
+      return { tag, notes: ns, recent };
+    })
+    .filter(f => f.notes.length > 0)
+    .sort((a, b) => b.notes.length - a.notes.length || b.recent - a.recent)
+    .slice(0, 3);
+}
+const capTag = t => t.charAt(0).toUpperCase() + t.slice(1);
 
 /* ---------- tiny markdown ---------- */
 function esc(s) {
@@ -241,10 +295,7 @@ async function viewFolders() {
     api("/api/digests").then(d => d.digests).catch(() => []),
   ]);
   const first = esc(state.me.name.split(" ")[0]);
-  const smart = mine.map(n => ({ n, st: taskStats(n.body) }));
-  const openNotes = smart.filter(t => t.st.total > 0 && t.st.open > 0);
-  const doneNotes = smart.filter(t => t.st.total > 0 && t.st.open === 0);
-  const openItems = openNotes.reduce((a, t) => a + t.st.open, 0);
+  const topics = topicFolders(mine);
   app.innerHTML = `
     <h1 class="large-greet">${greeting()},<br>${first}.</h1>
     <div id="nudges">${nudgeHtml(nudges)}</div>
@@ -257,13 +308,13 @@ async function viewFolders() {
       <div class="frow" data-go="#/list/letters">${folderSvg("letters")}
         <span class="frow-name">Weekly Letters</span><span class="frow-count">${letters.length}</span><span class="chev">›</span></div>
     </div>
+    ${topics.length ? `
     <p class="section-label">Smart folders</p>
     <div class="group">
-      <div class="frow" data-go="#/list/smart-open"><span class="frow-ic">◔</span>
-        <span class="frow-name">Open tasks</span><span class="frow-count">${openNotes.length ? openNotes.length + " notes · " + openItems + " open" : ""}</span><span class="chev">›</span></div>
-      <div class="frow" data-go="#/list/smart-done"><span class="frow-ic">✓</span>
-        <span class="frow-name">All done</span><span class="frow-count">${doneNotes.length || ""}</span><span class="chev">›</span></div>
-    </div>
+      ${topics.map(t => `
+      <div class="frow" data-go="#/list/topic/${encodeURIComponent(t.tag)}"><span class="frow-ic">◈</span>
+        <span class="frow-name">${esc(capTag(t.tag))}</span><span class="frow-count">${t.notes.length}</span><span class="chev">›</span></div>`).join("")}
+    </div>` : ""}
     <p class="section-label">Circle</p>
     <div class="group">
       <div class="frow" data-go="#/members"><span class="frow-ic">◯</span>
@@ -280,22 +331,15 @@ const FOLDER_META = {
   mine: { title: "My Notepad", back: "Folders", compose: true },
   circle: { title: "The Circle", back: "Folders", compose: true },
   letters: { title: "Weekly Letters", back: "Folders", compose: false },
-  "smart-open": { title: "Open tasks", back: "Folders", compose: false },
-  "smart-done": { title: "All done", back: "Folders", compose: false },
 };
-const SMART_KINDS = { "smart-open": true, "smart-done": true };
 async function viewList(kind) {
   renderTabs("notes");
   const meta = FOLDER_META[kind] || FOLDER_META.mine;
   let items = [];
   if (kind === "letters") {
     const { digests } = await api("/api/digests").catch(() => ({ digests: [] }));
-    items = digests.map(d => ({ kind: "letter", id: d.weekKey, weekKey: d.weekKey }));
-  } else if (SMART_KINDS[kind]) {
-    const { notes } = await api("/api/notes?scope=mine").catch(() => ({ notes: [] }));
-    items = notes
-      .map(n => ({ kind: "note", id: n.id, note: n, st: taskStats(n.body) }))
-      .filter(it => it.st.total > 0 && (kind === "smart-open" ? it.st.open > 0 : it.st.open === 0));
+    items = [{ kind: "today" }];
+    items.push(...digests.map(d => ({ kind: "letter", id: d.weekKey, weekKey: d.weekKey })));
   } else {
     const scope = kind === "mine" ? "mine" : "circle";
     const { notes } = await api("/api/notes?scope=" + scope).catch(() => ({ notes: [] }));
@@ -309,18 +353,22 @@ async function viewList(kind) {
     const query = q.trim().toLowerCase();
     const list = items.filter(it => {
       if (!query) return true;
+      if (it.kind === "today") return "today your tasks, gathered".includes(query);
       if (it.kind === "letter") return it.weekKey.toLowerCase().includes(query);
       return (it.note.title + " " + it.note.body).toLowerCase().includes(query);
     });
     if (!list.length) {
       const empty = query ? "Nothing matches “" + esc(q.trim()) + "”."
         : kind === "letters" ? "No letters yet.<br>The first one arrives Monday."
-        : kind === "smart-open" ? "No open tasks.<br>Enjoy the clear desk."
-        : kind === "smart-done" ? "Nothing finished yet.<br>Tick off a task and it lands here."
         : "Nothing here yet.";
       return `<div class="empty-state">${empty}</div>`;
     }
     return list.map(it => {
+      if (it.kind === "today") {
+        return `<div class="nrow" data-today="1">
+          <div class="nr-title">Today</div>
+          <div class="nr-sub">Your tasks, gathered</div></div>`;
+      }
       if (it.kind === "letter") {
         const isThis = it.weekKey === weekKey();
         return `<div class="nrow" data-letter="${esc(it.weekKey)}">
@@ -328,12 +376,9 @@ async function viewList(kind) {
           <div class="nr-sub">${esc(weekRangeLabel(it.weekKey))}</div></div>`;
       }
       const n = it.note;
-      const sub = SMART_KINDS[kind] && it.st
-        ? `${it.st.done}/${it.st.total} done · ${relTime(n.updatedAt)}`
-        : `${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}`;
       return `<div class="nrow" data-note="${n.id}">
         <div class="nr-title">${n.link ? "🔗 " : ""}${esc(n.title)}</div>
-        <div class="nr-sub">${sub}</div></div>`;
+        <div class="nr-sub">${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}</div></div>`;
     }).join("");
   };
   app.innerHTML = `
@@ -350,11 +395,41 @@ async function viewList(kind) {
   const bindRows = () => {
     app.querySelectorAll("[data-note]").forEach(r => r.onclick = () => location.hash = "#/note/" + r.dataset.note);
     app.querySelectorAll("[data-letter]").forEach(r => r.onclick = () => location.hash = "#/letter/" + r.dataset.letter);
+    app.querySelectorAll("[data-today]").forEach(r => r.onclick = () => location.hash = "#/letter/today");
   };
   bindRows();
   const fab = $("#compose");
   if (fab) fab.onclick = () => location.hash = "#/compose/" + kind;
   heartbeat("list:" + kind);
+}
+
+/* ---------- topic folder: notes gathered round one tag ---------- */
+async function viewTopic(tag) {
+  renderTabs("notes");
+  const { notes } = await api("/api/notes?scope=mine").catch(() => ({ notes: [] }));
+  const folder = topicFolders(notes).find(f => f.tag === tag);
+  const items = folder ? folder.notes : [];
+  app.innerHTML = `
+    <button class="back" data-go="#/folders">‹ Folders</button>
+    <h1 class="large-title">${esc(capTag(tag))}</h1>
+    <p class="list-count">${items.length} ${items.length === 1 ? "note" : "notes"}</p>
+    <div class="search"><span class="s-ic">⌕</span><input id="q" placeholder="Search" autocomplete="off"></div>
+    <div class="ngroup" id="rows"></div>`;
+  const renderRows = (q) => {
+    const query = q.trim().toLowerCase();
+    const list = items.filter(n => !query || (n.title + " " + n.body).toLowerCase().includes(query));
+    if (!list.length) return `<div class="empty-state">${query ? "Nothing matches “" + esc(q.trim()) + "”." : "Nothing gathered here yet."}</div>`;
+    return list.map(n => `<div class="nrow" data-note="${n.id}">
+        <div class="nr-title">${esc(n.title)}</div>
+        <div class="nr-sub">${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}</div></div>`).join("");
+  };
+  const rows = $("#rows"), q = $("#q");
+  const bind = () => rows.querySelectorAll("[data-note]").forEach(r => r.onclick = () => location.hash = "#/note/" + r.dataset.note);
+  rows.innerHTML = renderRows("");
+  bind();
+  q.addEventListener("input", () => { rows.innerHTML = renderRows(q.value); bind(); });
+  app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
+  heartbeat("list:topic:" + tag);
 }
 
 /* ---------- compose ---------- */
@@ -679,22 +754,27 @@ async function viewDetail(id, editing) {
 /* ---------- weekly letter ---------- */
 async function viewLetter(weekKeyParam) {
   renderTabs("notes");
+  const isToday = weekKeyParam === "today";
   let digest;
-  try { digest = (await api("/api/digest?week=" + encodeURIComponent(weekKeyParam))).digest; }
+  try { digest = (await api(isToday ? "/api/digest/today" : "/api/digest?week=" + encodeURIComponent(weekKeyParam))).digest; }
   catch (e) {
     app.innerHTML = '<button class="back" data-go="#/list/letters">‹ Weekly Letters</button><div class="empty-state">That letter isn\'t on the shelf.</div>';
     app.querySelector("[data-go]").onclick = (ev) => location.hash = ev.target.closest("[data-go]").dataset.go;
     return;
   }
+  const subtitle = isToday ? (digest.subtitle || "") : weekRangeLabel(digest.weekKey);
+  const emptyHtml = isToday
+    ? `<div class="digest-empty">${esc(digest.emptyText || "Nothing here yet.").replace(/\n/g, "<br>")}</div>`
+    : `<div class="digest-empty">A quiet week.<br>Sometimes the best ideas are still forming.</div>`;
   app.innerHTML = `
     <button class="back" data-go="#/list/letters">‹ Weekly Letters</button>
     <h1 class="note-title">${esc(digest.title)}</h1>
-    <p class="note-meta">${esc(weekRangeLabel(digest.weekKey))}</p>
+    <p class="note-meta">${esc(subtitle)}</p>
     <div class="card digest-letter">
-      ${digest.empty ? `<div class="digest-empty">A quiet week.<br>Sometimes the best ideas are still forming.</div>` : `
+      ${digest.empty ? emptyHtml : `
         <p class="intro">${esc(digest.intro)}</p>
         ${digest.sections.map(s => `<h3>${esc(s.heading)}</h3><ul>${s.lines.map(l => `<li>${inline(l)}</li>`).join("")}</ul>`).join("")}
-        <p class="intro" style="margin-top:22px">Carry one of these into next week — that's plenty.</p>`}
+        ${isToday ? "" : `<p class="intro" style="margin-top:22px">Carry one of these into next week — that's plenty.</p>`}`}
     </div>`;
   app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
   heartbeat("letter");
@@ -1221,7 +1301,11 @@ function route() {
   const h = location.hash || "#/folders";
   window.scrollTo(0, 0);
   if (h.startsWith("#/note/")) { const ed = h.includes("?edit"); viewDetail(h.split("/")[2].split("?")[0], ed); }
-  else if (h.startsWith("#/list/")) viewList(h.split("/")[2] || "mine");
+  else if (h.startsWith("#/list/")) {
+    const parts = h.split("/");
+    if (parts[2] === "topic") viewTopic(decodeURIComponent(parts.slice(3).join("/")));
+    else viewList(parts[2] || "mine");
+  }
   else if (h.startsWith("#/compose/")) viewCompose(h.split("/")[2] || "mine");
   else if (h.startsWith("#/letter/")) viewLetter(h.split("/")[2]);
   else if (h === "#/members") viewMembers();

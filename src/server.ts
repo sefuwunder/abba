@@ -2,7 +2,7 @@
 // Bun + zero dependencies + SQLite. Port 3013.
 import { Database } from "bun:sqlite";
 import { initDataDir, getDb, nowIso, randomToken, randomInviteCode, inviteExpiryIso, randomUserId, isUserId, __setDbForTests } from "./db";
-import { autoTitle, readMins, relatedIdeas, composeDigest, getDigest, listDigests, nudgesFor, dismissNudge, type NoteRow } from "./mind";
+import { autoTitle, readMins, relatedIdeas, composeDigest, composeDailyLetter, getDigest, listDigests, nudgesFor, dismissNudge, type NoteRow } from "./mind";
 import {
   getMesh, publicUrl, meshTick, meshProtocol, ensureNoteGids,
   publishNote, publishNoteTombstone, publishReaction, publishComment,
@@ -602,6 +602,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   if (req.method === "GET" && path === "/api/digests") return json({ digests: listDigests() });
+  if (req.method === "GET" && path === "/api/digest/today") return json({ digest: composeDailyLetter(me.id) });
   if (req.method === "GET" && path === "/api/digest") {
     const d = getDigest(url.searchParams.get("week") || undefined);
     if (!d) return err("That letter isn't on the shelf.", 404);
