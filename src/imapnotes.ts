@@ -7,9 +7,14 @@
 // deleting a note deletes its message; deleting a message just lets the
 // note sync back down again.
 //
-// Wire client is modeled on relay's zero-dependency IMAP Conn (implicit TLS,
-// tagged commands, literal handling), trimmed to what the sync needs.
+// The wire protocol runs on Relay's proven IMAP client (src/imap.ts —
+// Abba's copy of relay/src/imap.ts). This file only adds the notes-sync
+// semantics on top of its Conn.
 import { getDb, nowIso } from "./db.ts";
+import { Conn, ImapError, connectAndLogin, qstr, decodeHeader } from "./imap.ts";
+
+export { decodeHeader } from "./imap.ts";
+export { ImapError } from "./imap.ts";
 
 export interface ImapAccount {
   host: string;
@@ -19,156 +24,8 @@ export interface ImapAccount {
   folder: string;
 }
 
-export class ImapError extends Error {
-  status: number;
-  constructor(status: number, msg: string) {
-    super(msg);
-    this.status = status;
-  }
-}
-
-const READ_TIMEOUT_MS = 30000;
-
-class Conn {
-  private buf = Buffer.alloc(0);
-  private lines: string[] = [];
-  private wake: (() => void) | null = null;
-  private closedErr: Error | null = null;
-  private sock: any = null;
-
-  async open(host: string, port: number, secure = true) {
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) { settled = true; reject(new ImapError(0, `mail server not reachable (${host}:${port}) — timed out`)); }
-      }, READ_TIMEOUT_MS);
-      const self = this;
-      const pending: any = Bun.connect({
-        hostname: host, port, tls: secure,
-        socket: {
-          open(sock: any) {
-            self.sock = sock;
-            if (!settled) { settled = true; clearTimeout(timer); resolve(); }
-          },
-          data(_s: any, data: Buffer) { self.onData(data); },
-          error(_s: any, err: Error) {
-            if (!settled) { settled = true; clearTimeout(timer); reject(new ImapError(0, `mail server not reachable (${host}:${port}) — ${err.message}`)); }
-            else self.onClose(err);
-          },
-          close() { self.onClose(new Error("connection closed by server")); },
-        },
-      });
-      if (pending && typeof pending.catch === "function") {
-        pending.catch((err: Error) => {
-          if (!settled) { settled = true; clearTimeout(timer); reject(new ImapError(0, `mail server not reachable (${host}:${port}) — ${err.message || "connection failed"}`)); }
-        });
-      }
-    });
-  }
-
-  private onData(data: Buffer) {
-    this.buf = Buffer.concat([this.buf, data]);
-    for (;;) {
-      const idx = this.buf.indexOf("\r\n");
-      if (idx < 0) break;
-      const line = this.buf.slice(0, idx).toString("utf8");
-      let rest = this.buf.slice(idx + 2);
-      const lm = line.match(/\{(\d+)\}$/);
-      if (lm) {
-        const n = Number(lm[1]);
-        if (rest.length < n) break; // wait for the full literal
-        const lit = rest.slice(0, n).toString("utf8");
-        rest = rest.slice(n);
-        this.buf = rest;
-        this.lines.push(line + "\n" + lit);
-        continue;
-      }
-      this.buf = rest;
-      this.lines.push(line);
-    }
-    if (this.wake) { const w = this.wake; this.wake = null; w(); }
-  }
-
-  private onClose(err: Error) {
-    if (!this.closedErr) this.closedErr = err;
-    if (this.wake) { const w = this.wake; this.wake = null; w(); }
-  }
-
-  async readLine(): Promise<string> {
-    for (;;) {
-      if (this.lines.length) return this.lines.shift()!;
-      if (this.closedErr) throw new ImapError(0, this.closedErr.message);
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.wake = null;
-          reject(new ImapError(0, "mail server timed out waiting for a reply"));
-        }, READ_TIMEOUT_MS);
-        this.wake = () => { clearTimeout(timer); resolve(); };
-      });
-    }
-  }
-
-  write(s: string) { this.sock.write(s); }
-
-  /** Send one tagged command; return response lines through the tagged OK. */
-  async cmd(tag: string, command: string): Promise<string[]> {
-    this.write(`${tag} ${command}\r\n`);
-    const out: string[] = [];
-    for (;;) {
-      const line = await this.readLine();
-      if (line.startsWith(`${tag} `)) {
-        const rest = line.slice(tag.length + 1);
-        if (/^OK\b/i.test(rest)) return out;
-        const msg = rest.replace(/^(NO|BAD)\s*/i, "").trim();
-        const authish = /auth|login|credential|password|username/i.test(msg);
-        throw new ImapError(authish ? 401 : 502, `mail server refused: ${msg || rest}`);
-      }
-      out.push(line);
-    }
-  }
-
-  /** APPEND with a literal body: wait for the "+" continuation first. */
-  async append(tag: string, folder: string, raw: string) {
-    const bytes = Buffer.byteLength(raw, "utf8");
-    this.write(`${tag} APPEND ${qstr(folder)} {${bytes}}\r\n`);
-    const cont = await this.readLine();
-    if (!cont.startsWith("+")) throw new ImapError(502, `mail server refused APPEND: ${cont.slice(0, 80)}`);
-    this.write(raw);
-    const out: string[] = [];
-    for (;;) {
-      const line = await this.readLine();
-      if (line.startsWith(`${tag} `)) {
-        if (/^OK\b/i.test(line.slice(tag.length + 1))) return;
-        throw new ImapError(502, `APPEND failed: ${line.slice(0, 120)}`);
-      }
-      out.push(line);
-    }
-  }
-
-  close() {
-    try { this.write("a999 LOGOUT\r\n"); } catch { /* already gone */ }
-    try { this.sock.end(); } catch { /* already gone */ }
-  }
-}
-
-function qstr(s: string): string {
-  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
-/** Connect + LOGIN. Caller owns the connection. `insecure` is for the local
- *  test fake only — real mail servers are always reached over implicit TLS. */
-async function connectAndLogin(a: ImapAccount, insecure = false): Promise<Conn> {
-  const conn = new Conn();
-  await conn.open(a.host, a.port, !insecure);
-  const greet = await conn.readLine();
-  if (!/^\* OK/i.test(greet)) { conn.close(); throw new ImapError(502, `mail server did not greet properly: ${greet.slice(0, 80)}`); }
-  try {
-    await conn.cmd("a001", `LOGIN ${qstr(a.user)} ${qstr(a.pass)}`);
-  } catch (e) {
-    conn.close();
-    throw e;
-  }
-  return conn;
+function toCfg(a: ImapAccount, insecure = false) {
+  return { host: a.host, port: a.port, user: a.user, pass: a.pass, secure: !insecure };
 }
 
 /** SELECT the notes folder, creating it first when it doesn't exist. */
@@ -185,15 +42,32 @@ async function selectOrCreate(conn: Conn, folder: string) {
   }
 }
 
+/** APPEND with a literal body: wait for the "+" continuation first. */
+async function appendMessage(conn: Conn, tag: string, folder: string, raw: string) {
+  const bytes = Buffer.byteLength(raw, "utf8");
+  conn.write(`${tag} APPEND ${qstr(folder)} {${bytes}}\r\n`);
+  const cont = await conn.readLine();
+  if (!cont.startsWith("+")) throw new ImapError(502, `mail server refused APPEND: ${cont.slice(0, 80)}`);
+  conn.write(raw);
+  for (;;) {
+    const line = await conn.readLine();
+    if (line.startsWith(`${tag} `)) {
+      if (/^OK\b/i.test(line.slice(tag.length + 1))) return;
+      throw new ImapError(502, `APPEND failed: ${line.slice(0, 120)}`);
+    }
+  }
+}
+
 /** Validate credentials and folder access without changing anything. */
 export async function testImap(a: ImapAccount): Promise<void> {
-  const conn = await connectAndLogin(a);
+  const { conn } = await connectAndLogin(toCfg(a));
   try {
     await selectOrCreate(conn, a.folder);
   } finally {
     conn.close();
   }
 }
+
 // ---------- message parsing ----------
 
 interface RemoteMsg {
@@ -221,32 +95,10 @@ function parseHeaders(raw: string): Record<string, string> {
   return out;
 }
 
-/** RFC 2047 encoded-word decoding for subjects. */
-export function decodeHeader(v: string): string {
-  return String(v ?? "").replace(/=\?([^?]+)\?([qQbB])\?([^?]*)\?=/g, (_, cs, enc, text) => {
-    try {
-      if (enc.toUpperCase() === "B") {
-        return new TextDecoder(cs || "utf-8").decode(Buffer.from(String(text), "base64"));
-      }
-      const bytes: number[] = [];
-      const s = String(text);
-      for (let i = 0; i < s.length; i++) {
-        const c = s[i];
-        if (c === "_") { bytes.push(0x20); continue; }
-        if (c === "=" && i + 2 < s.length) {
-          const h = parseInt(s.slice(i + 1, i + 3), 16);
-          if (!Number.isNaN(h)) { bytes.push(h); i += 2; continue; }
-        }
-        bytes.push(c.charCodeAt(0));
-      }
-      return new TextDecoder(cs || "utf-8").decode(new Uint8Array(bytes));
-    } catch { return String(text); }
-  });
-}
-
 function encodeHeader(v: string): string {
   return /[^\x00-\x7F]/.test(v) ? `=?UTF-8?B?${Buffer.from(v, "utf-8").toString("base64")}?=` : v;
 }
+
 function parseImapDate(s: string): number {
   const t = Date.parse(s);
   if (!Number.isNaN(t)) return t;
@@ -341,6 +193,7 @@ export function parseMessage(raw: string): ParsedNote {
 
 const STATUSES = ["seed", "sprout", "motion", "decided", "resting"] as const;
 
+/** Build the raw RFC822 message for a note. Exported for tests. */
 export function buildMessage(n: { id: number; title: string; body: string; tags: string[]; status: string; updated_at: string }): string {
   const abbaId = "note-" + n.id;
   const bodyText = String(n.body || "").replace(/\r\n/g, "\n").replace(/\n/g, "\r\n");
@@ -379,11 +232,11 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
     host: acct.host, port: acct.port || 993,
     user: acct.username, pass: acct.password, folder: acct.folder || "Notes",
   };
-  const conn = await connectAndLogin(cfg, !!opts.insecure).catch((e: any) => {
+  const { conn } = await connectAndLogin(toCfg(cfg, !!opts.insecure)).catch((e: any) => {
     const msg = String((e && e.message) || e).slice(0, 200);
     try { db.query("UPDATE imap_accounts SET last_error = ? WHERE member_id = ?").run(msg, memberId); } catch { /* db gone */ }
     result.errors.push(msg);
-    return null;
+    return { conn: null as Conn | null };
   });
   if (!conn) return result;
   try {
@@ -401,7 +254,7 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
       const m = byAbbaId.get(abbaId);
       const tags = JSON.parse(n.tags || "[]");
       if (!m) {
-        await conn.append("a020", cfg.folder, buildMessage({ ...n, tags }));
+        await appendMessage(conn, "a020", cfg.folder, buildMessage({ ...n, tags }));
         result.pushed++;
         continue;
       }
@@ -409,7 +262,7 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
       const noteMs = Date.parse(n.updated_at) || 0;
       if (noteMs - m.dateMs > 2000) {
         await conn.cmd("a021", `UID STORE ${m.uid} +FLAGS (\\Deleted)`);
-        await conn.append("a022", cfg.folder, buildMessage({ ...n, tags }));
+        await appendMessage(conn, "a022", cfg.folder, buildMessage({ ...n, tags }));
         result.pushed++;
       } else if (m.dateMs - noteMs > 2000) {
         const p = parseMessage(await fetchRaw(conn, m.uid));
@@ -434,7 +287,7 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
           STATUSES.includes(p.status as any) ? p.status : "seed", readMins(p.body), t, t);
       const newId = Number(r.lastInsertRowid);
       await conn.cmd("a023", `UID STORE ${m.uid} +FLAGS (\\Deleted)`);
-      await conn.append("a024", cfg.folder, buildMessage({
+      await appendMessage(conn, "a024", cfg.folder, buildMessage({
         id: newId, title: p.subject || "Untitled", body: p.body, tags: p.tags,
         status: STATUSES.includes(p.status as any) ? p.status : "seed", updated_at: t,
       }));
