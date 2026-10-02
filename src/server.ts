@@ -10,6 +10,7 @@ import {
 } from "./meshbridge";
 import { migrateCircle, burnCircle, resetAbba, exportMemberBundle, importBundle } from "./circleadmin";
 import { peerIdFor } from "./mesh/identity";
+import { syncImapAccount, testImap } from "./imapnotes";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const PALETTE = ["#C0765A", "#7A8B6F", "#5A7A8C", "#9A6B8F", "#B8934A", "#6B7F9E", "#8C5A5A", "#5F8C7A", "#A0765A", "#7A6B9E", "#4F7A6B", "#96522F"];
@@ -17,6 +18,29 @@ const STATUSES = ["seed", "sprout", "motion", "decided", "resting"] as const;
 const REACTIONS = ["felt", "spark", "yes"] as const; // ❤ felt this · 💡 sparked · 🙌 yes
 
 initDataDir();
+
+// ---- IMAP Notes-folder sync ------------------------------------------------------
+// Per-member two-way sync with a Notes folder on the member's own IMAP server.
+// queueImapSync() debounces a sync ~20s after the member edits notes; a
+// 10-minute interval catches changes made from mail clients.
+const imapTimers = new Map<number, any>();
+function queueImapSync(memberId: number) {
+  try {
+    const has = getDb().query("SELECT member_id FROM imap_accounts WHERE member_id = ?").get(memberId);
+    if (!has) return;
+    if (imapTimers.has(memberId)) clearTimeout(imapTimers.get(memberId));
+    imapTimers.set(memberId, setTimeout(() => {
+      imapTimers.delete(memberId);
+      syncImapAccount(memberId).catch(() => {});
+    }, 20000));
+  } catch { /* db not ready */ }
+}
+setInterval(() => {
+  try {
+    const rows = getDb().query("SELECT member_id FROM imap_accounts").all() as any[];
+    for (const r of rows) syncImapAccount(r.member_id).catch(() => {});
+  } catch { /* db not ready */ }
+}, 10 * 60 * 1000);
 
 // light rate limit for the public re-open endpoint (10 tries / minute / ip)
 const reopenAttempts = new Map<string, number[]>();
@@ -466,6 +490,7 @@ async function handle(req: Request): Promise<Response> {
     publishNote(getMesh(), db, Number(res.lastInsertRowid));
     const note = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
       JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(Number(res.lastInsertRowid)) as NoteRow;
+    queueImapSync(me.id);
     return json({ note: noteJson(note, me) }, 201);
   }
 
@@ -520,12 +545,14 @@ async function handle(req: Request): Promise<Response> {
       publishNote(getMesh(), db, noteId);
       const fresh = db.query(`SELECT n.*, m.name AS member_name, m.color AS member_color FROM notes n
         JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as NoteRow;
+      queueImapSync(me.id);
       return json({ note: noteJson(fresh, me) });
     }
 
     if (req.method === "DELETE" && sub === "") {
       if (!isLink) publishNoteTombstone(getMesh(), db, noteId); // links are local-only
       db.query("DELETE FROM notes WHERE id = ?").run(noteId);
+      queueImapSync(me.id);
       return json({ ok: true });
     }
 
@@ -585,6 +612,48 @@ async function handle(req: Request): Promise<Response> {
     const b = await body(req);
     if (b.key) dismissNudge(me.id, String(b.key));
     return json({ ok: true });
+  }
+
+  // ---- IMAP Notes-folder sync (per member; password never leaves the server) ----
+  if (path === "/api/imap" && req.method === "GET") {
+    const a = db.query("SELECT host, port, username, folder, last_sync_at, last_error FROM imap_accounts WHERE member_id = ?").get(me.id) as any;
+    return json(a ? {
+      configured: true, host: a.host, port: a.port, username: a.username,
+      folder: a.folder, lastSyncAt: a.last_sync_at, lastError: a.last_error,
+    } : { configured: false });
+  }
+  if (path === "/api/imap" && (req.method === "PUT" || req.method === "POST")) {
+    const b = await body(req);
+    const host = String(b.host || "").trim();
+    const username = String(b.username || "").trim();
+    const folder = String(b.folder || "Notes").trim().slice(0, 60) || "Notes";
+    const port = b.port && Number(b.port) > 0 ? Number(b.port) : 993;
+    const existing = db.query("SELECT password FROM imap_accounts WHERE member_id = ?").get(me.id) as any;
+    const password = typeof b.password === "string" && b.password ? b.password : (existing ? existing.password : "");
+    if (!host || !username || !password) return err("Host, username, and password are required.", 400);
+    try {
+      await testImap({ host, port, user: username, pass: password, folder });
+    } catch (e: any) {
+      return err("Couldn't reach that mailbox: " + String((e && e.message) || e).slice(0, 160), 502);
+    }
+    const t = nowIso();
+    db.query(`INSERT INTO imap_accounts (member_id, host, port, username, password, folder, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(member_id) DO UPDATE SET host = excluded.host, port = excluded.port,
+        username = excluded.username, password = excluded.password, folder = excluded.folder,
+        last_error = '', updated_at = excluded.updated_at`)
+      .run(me.id, host, port, username, password, folder, t);
+    queueImapSync(me.id);
+    return json({ ok: true });
+  }
+  if (path === "/api/imap" && req.method === "DELETE") {
+    db.query("DELETE FROM imap_accounts WHERE member_id = ?").run(me.id);
+    if (imapTimers.has(me.id)) { clearTimeout(imapTimers.get(me.id)); imapTimers.delete(me.id); }
+    return json({ ok: true });
+  }
+  if (path === "/api/imap/sync" && req.method === "POST") {
+    const r = await syncImapAccount(me.id);
+    return json(r);
   }
 
   return err("Not found.", 404);

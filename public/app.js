@@ -755,6 +755,8 @@ async function viewMembers() {
       </div>
       <div id="tinv-list" style="margin-top:10px"><p class="sub">Loading…</p></div>
     </div>` : ""}
+    <p class="section-label">Notes on IMAP</p>
+    <div class="card" id="imap-card"><p class="sub" id="imap-loading">Checking…</p></div>
     <p class="section-label">Account</p>
     <div class="card">
       <p class="sub" style="margin:0 0 10px">${state.me.hasPassword
@@ -802,6 +804,7 @@ async function viewMembers() {
     catch (e) { toast(e.message); }
   };
   renderMeshCard(isOwner);
+  renderImapCard();
   const accSet = $("#acc-set");
   if (accSet) accSet.onclick = async () => {
     const pw = ($("#acc-pass") || {}).value || "";
@@ -986,6 +989,71 @@ async function renderMeshCard(isOwner) {
     try { await api("/api/mesh/peers/" + b.dataset.id, { method: "DELETE" }); renderMeshCard(isOwner); }
     catch (e) { toast(e.message); }
   });
+}
+
+/* ---------- Notes on IMAP: two-way sync with a folder on your mail server ---------- */
+async function renderImapCard() {
+  const card = $("#imap-card");
+  if (!card) return;
+  let st;
+  try { st = await api("/api/imap"); }
+  catch (e) { card.innerHTML = `<p class="sub">Couldn't check IMAP status: ${esc(e.message)}</p>`; return; }
+  const syncLine = st.configured
+    ? `<p class="sub" style="margin:0 0 10px">${st.lastSyncAt ? "Last synced " + esc(relTime(st.lastSyncAt)) + "." : "Not synced yet."}` +
+      (st.lastError ? ` <span style="color:var(--danger)">Last error: ${esc(st.lastError)}</span>` : "") + `</p>`
+    : `<p class="sub" style="margin:0 0 10px">Mirror your notepad into a <span class="mono">Notes</span> folder on your own mail server — readable from any mail app, writable back into Abba. Only your notes sync; the circle's shared notes stay here.</p>`;
+  card.innerHTML = `
+    ${st.configured ? `<p class="sub" style="margin:0 0 10px"><span class="mono">${esc(st.username)}@${esc(st.host)}</span> → <span class="mono">${esc(st.folder)}</span></p>` : ""}
+    ${syncLine}
+    <div class="btn-row">
+      <input id="imap-host" placeholder="mail.example.com" style="flex:2;min-width:0" autocomplete="off" value="${esc(st.host || "")}">
+      <input id="imap-port" placeholder="993" inputmode="numeric" style="flex:1;min-width:0;max-width:76px" value="${esc(st.port || "993")}">
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <input id="imap-user" placeholder="username" style="flex:1;min-width:0" autocomplete="username" value="${esc(st.username || "")}">
+      <input id="imap-pass" type="password" placeholder="${st.configured ? "password (leave blank to keep)" : "password"}" style="flex:1;min-width:0" autocomplete="new-password">
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <input id="imap-folder" placeholder="Notes" style="flex:1;min-width:0" autocomplete="off" value="${esc(st.folder || "Notes")}">
+      <button class="btn btn-primary" id="imap-save">${st.configured ? "Save" : "Connect"}</button>
+    </div>
+    ${st.configured ? `
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-ghost" id="imap-sync">Sync now</button>
+      <button class="btn btn-quiet" id="imap-drop" style="color:var(--danger)">Disconnect</button>
+    </div>
+    <p class="sub" style="margin:10px 0 0">Abba is the source of truth: deleting a note deletes its message, and a message deleted in your mail app syncs back down. Edits win by newest timestamp.</p>` : ""}`;
+  $("#imap-save").onclick = async () => {
+    const payload = {
+      host: $("#imap-host").value.trim(),
+      port: Number($("#imap-port").value.trim()) || 993,
+      username: $("#imap-user").value.trim(),
+      password: $("#imap-pass").value,
+      folder: $("#imap-folder").value.trim() || "Notes",
+    };
+    if (!payload.host || !payload.username || (!payload.password && !st.configured)) { toast("Host, username, and password are required."); return; }
+    try {
+      await api("/api/imap", { method: "PUT", body: JSON.stringify(payload) });
+      toast(st.configured ? "Saved." : "Connected — first sync is on its way.");
+      renderImapCard();
+    } catch (e) { toast(e.message); }
+  };
+  const sy = $("#imap-sync");
+  if (sy) sy.onclick = async () => {
+    sy.disabled = true;
+    try {
+      const r = await api("/api/imap/sync", { method: "POST" });
+      toast(r.errors.length ? "Sync had trouble: " + r.errors[0] : `Synced — ${r.pushed} up, ${r.pulled} down.`);
+    } catch (e) { toast(e.message); }
+    sy.disabled = false;
+    renderImapCard();
+  };
+  const dr = $("#imap-drop");
+  if (dr) dr.onclick = async () => {
+    if (!confirm("Disconnect IMAP? Your notes stay in Abba; nothing is deleted from your mail.")) return;
+    try { await api("/api/imap", { method: "DELETE" }); toast("Disconnected."); renderImapCard(); }
+    catch (e) { toast(e.message); }
+  };
 }
 
 /* ---------- welcome ---------- */

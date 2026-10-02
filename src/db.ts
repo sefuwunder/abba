@@ -113,6 +113,17 @@ function migrate(d: Database): void {
       reason TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS imap_accounts (
+      member_id INTEGER PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL DEFAULT 993,
+      username TEXT NOT NULL,
+      password TEXT NOT NULL,
+      folder TEXT NOT NULL DEFAULT 'Notes',
+      last_sync_at TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    );
   `);
   // mesh columns (added after the fact — idempotent)
   for (const [table, column] of [["notes", "gid"], ["notes", "link_origin"], ["comments", "remote_gid"], ["members", "password_hash"], ["circle", "invite_expires_at"], ["members", "user_id"]]) {
