@@ -45,7 +45,7 @@ beforeAll(() => {
   g.navigator = {};
 
   let js = readFileSync(join(ROOT, "public", "app.js"), "utf8");
-  js = js.replace(/\nboot\(\);?\s*$/, ""); // don't boot; test pure functions
+  js = js.replace(/\nroute\(\);?\s*$/, ""); // don't boot; test pure functions
   eval(js + "\n;globalThis.__abbaTasks = { taskStats, toggleTask, md };");
   ({ taskStats, toggleTask, md } = g.__abbaTasks);
   delete g.__abbaTasks;

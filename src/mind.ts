@@ -42,8 +42,8 @@ export function readMins(body: string): number {
 }
 
 export interface NoteRow {
-  id: number; member_id: number; title: string; body: string;
-  tags: string; status: string; shared: number; read_mins: number;
+  id: number; title: string; body: string;
+  tags: string; status: string; read_mins: number;
   created_at: string; updated_at: string;
   member_name?: string; member_color?: string;
 }
@@ -93,22 +93,22 @@ function weekKey(d = new Date()): string {
 export function currentWeekKey(): string { return weekKey(); }
 
 /** Read a digest edition: cached if it exists, composed fresh for the current week, null otherwise. */
-export function getDigest(wk: string | undefined, circleId: number): Digest | null {
+export function getDigest(wk: string | undefined): Digest | null {
   const db = getDb();
   const key = wk || weekKey();
-  const cached = db.query("SELECT payload FROM digests WHERE week_key = ? AND circle_id = ?").get(key, circleId) as any;
+  const cached = db.query("SELECT payload FROM digests WHERE week_key = ?").get(key) as any;
   if (cached) {
     const p = JSON.parse(cached.payload);
     return { weekKey: key, ...p };
   }
-  if (!wk || wk === weekKey()) return composeDigest(circleId);
+  if (!wk || wk === weekKey()) return composeDigest();
   return null;
 }
 
 /** Every cached edition, newest first — the Weekly Letters shelf. */
-export function listDigests(circleId: number): { weekKey: string; createdAt: string; title: string }[] {
+export function listDigests(): { weekKey: string; createdAt: string; title: string }[] {
   const db = getDb();
-  const rows = db.query("SELECT week_key, payload, created_at FROM digests WHERE circle_id = ? ORDER BY week_key DESC").all(circleId) as any[];
+  const rows = db.query("SELECT week_key, payload, created_at FROM digests ORDER BY week_key DESC").all() as any[];
   return rows.map((r) => ({ weekKey: r.week_key, createdAt: r.created_at, title: JSON.parse(r.payload).title || "Weekly letter" }));
 }
 
@@ -122,10 +122,10 @@ const OUTROS = [
   "Carry one of these into next week — that's plenty.",
 ];
 
-export function composeDigest(circleId: number): Digest {
+export function composeDigest(): Digest {
   const db = getDb();
   const wk = weekKey();
-  const cached = db.query("SELECT payload FROM digests WHERE week_key = ? AND circle_id = ?").get(wk, circleId) as any;
+  const cached = db.query("SELECT payload FROM digests WHERE week_key = ?").get(wk) as any;
   if (cached) {
     const p = JSON.parse(cached.payload);
     return { weekKey: wk, ...p };
@@ -135,29 +135,28 @@ export function composeDigest(circleId: number): Digest {
   const sinceIso = since.toISOString();
 
   const notes = db.query(`
-    SELECT n.*, m.name AS member_name FROM notes n
-    JOIN members m ON m.id = n.member_id
-    WHERE n.circle_id = ? AND n.shared = 1 AND n.created_at >= ? ORDER BY n.created_at DESC
-  `).all(circleId, sinceIso) as NoteRow[];
+    SELECT * FROM notes
+    WHERE created_at >= ? ORDER BY created_at DESC
+  `).all(sinceIso) as NoteRow[];
 
   const statusMoves = db.query(`
-    SELECT e.*, n.title, m.name AS member_name FROM events e
-    JOIN notes n ON n.id = e.note_id JOIN members m ON m.id = e.member_id
-    WHERE e.circle_id = ? AND e.kind = 'status' AND e.created_at >= ? ORDER BY e.created_at DESC
-  `).all(circleId, sinceIso) as any[];
+    SELECT e.*, n.title FROM events e
+    JOIN notes n ON n.id = e.note_id
+    WHERE e.kind = 'status' AND e.created_at >= ? ORDER BY e.created_at DESC
+  `).all(sinceIso) as any[];
 
   const commented = db.query(`
     SELECT DISTINCT n.id, n.title FROM comments c
     JOIN notes n ON n.id = c.note_id
-    WHERE n.circle_id = ? AND c.created_at >= ? AND n.shared = 1 ORDER BY c.created_at DESC LIMIT 8
-  `).all(circleId, sinceIso) as any[];
+    WHERE c.created_at >= ? ORDER BY c.created_at DESC LIMIT 8
+  `).all(sinceIso) as any[];
 
   const sections: DigestSection[] = [];
   const fresh = notes.filter((n) => n.status === "seed" || n.status === "sprout");
   if (fresh.length) {
     sections.push({
       heading: "New seeds",
-      lines: fresh.slice(0, 6).map((n) => `**${n.title}** — ${n.member_name || ""}`),
+      lines: fresh.slice(0, 6).map((n) => `**${n.title}**`),
     });
   }
   const moving = statusMoves.filter((e) => ["motion", "decided"].includes(JSON.parse(e.meta || "{}").to));
@@ -166,7 +165,7 @@ export function composeDigest(circleId: number): Digest {
     for (const e of moving) {
       if (seen.has(e.note_id)) continue; seen.add(e.note_id);
       const to = JSON.parse(e.meta || "{}").to;
-      lines.push(`**${e.title}** ${to === "decided" ? "landed — a decision was made" : "is in motion"} (${e.member_name})`);
+      lines.push(`**${e.title}** ${to === "decided" ? "landed — a decision was made" : "is in motion"}`);
       if (lines.length >= 6) break;
     }
     sections.push({ heading: "What moved", lines });
@@ -177,30 +176,30 @@ export function composeDigest(circleId: number): Digest {
       lines: commented.map((c) => `**${c.title}** — the conversation kept going`),
     });
   }
-  // Quiet ones: shared ideas untouched for 14+ days (gentle, never shaming)
+  // Quiet ones: ideas untouched for 14+ days (gentle, never shaming)
   const quiet = db.query(`
-    SELECT n.*, m.name AS member_name FROM notes n JOIN members m ON m.id = n.member_id
-    WHERE n.circle_id = ? AND n.shared = 1 AND n.status IN ('seed','sprout') AND n.updated_at < ?
-    ORDER BY n.updated_at ASC LIMIT 4
-  `).all(circleId, new Date(Date.now() - 14 * 864e5).toISOString()) as NoteRow[];
+    SELECT * FROM notes
+    WHERE status IN ('seed','sprout') AND updated_at < ?
+    ORDER BY updated_at ASC LIMIT 4
+  `).all(new Date(Date.now() - 14 * 864e5).toISOString()) as NoteRow[];
   if (quiet.length) {
     sections.push({
       heading: "Still simmering",
-      lines: quiet.map((n) => `**${n.title}** — ${n.member_name || ""} planted this a while back`),
+      lines: quiet.map((n) => `**${n.title}** — planted a while back, still simmering`),
     });
   }
 
   const digest: Digest = {
     weekKey: wk,
-    title: "This week in the circle",
+    title: "This week in your notepad",
     intro: INTROS[wk.charCodeAt(wk.length - 1) % INTROS.length],
     sections,
     empty: sections.length === 0,
   };
   // Cache for the week; a "refresh" is just a re-read once new events land —
   // the digest is recomposed when the week turns over.
-  db.query("INSERT INTO digests (circle_id, week_key, payload, created_at) VALUES (?, ?, ?, ?)").run(
-    circleId, wk, JSON.stringify({ title: digest.title, intro: digest.intro, sections: digest.sections, empty: digest.empty }), nowIso());
+  db.query("INSERT INTO digests (week_key, payload, created_at) VALUES (?, ?, ?)").run(
+    wk, JSON.stringify({ title: digest.title, intro: digest.intro, sections: digest.sections, empty: digest.empty }), nowIso());
   return digest;
 }
 
@@ -210,37 +209,28 @@ export function composeDigest(circleId: number): Digest {
 
 export interface Nudge { key: string; text: string; noteId?: number; action?: string }
 
-export function nudgesFor(memberId: number, circleId: number): Nudge[] {
+export function nudgesFor(): Nudge[] {
   const db = getDb();
   const out: Nudge[] = [];
   const seen = new Set(
-    (db.query("SELECT nudge_key FROM nudges_seen WHERE member_id = ?").all(memberId) as any[]).map((r) => r.nudge_key)
+    (db.query("SELECT nudge_key FROM nudges_seen").all() as any[]).map((r) => r.nudge_key)
   );
-  // Stale sprouts: shared ideas sitting 9+ days without movement (own ideas only — never nag about others')
+  // Stale sprouts: ideas sitting 9+ days without movement
   const stale = db.query(`
     SELECT id, title FROM notes
-    WHERE member_id = ? AND shared = 1 AND status = 'sprout'
+    WHERE status = 'sprout'
       AND updated_at < ? ORDER BY updated_at ASC LIMIT 2
-  `).all(memberId, new Date(Date.now() - 9 * 864e5).toISOString()) as any[];
+  `).all(new Date(Date.now() - 9 * 864e5).toISOString()) as any[];
   for (const s of stale) {
     const key = `stale-${s.id}`;
     if (!seen.has(key)) out.push({ key, text: `“${s.title}” has been sprouting for a while — still alive, or time to let it rest?`, noteId: s.id, action: "rest" });
   }
-  // Unread circle ideas (shared by others, never opened — tracked via events is overkill; use created recency)
-  const unread = db.query(`
-    SELECT id, title FROM notes
-    WHERE circle_id = ? AND shared = 1 AND member_id != ? AND created_at > ?
-    ORDER BY created_at DESC LIMIT 3
-  `).all(circleId, memberId, new Date(Date.now() - 3 * 864e5).toISOString()) as any[];
-  if (unread.length >= 3 && !seen.has("unread-3")) {
-    out.push({ key: "unread-3", text: `${unread.length} new ideas landed in the circle this week — worth a slow read.` });
-  }
   return out.slice(0, 3);
 }
 
-export function dismissNudge(memberId: number, key: string): void {
-  getDb().query("INSERT OR IGNORE INTO nudges_seen (member_id, nudge_key, created_at) VALUES (?, ?, ?)")
-    .run(memberId, key, nowIso());
+export function dismissNudge(key: string): void {
+  getDb().query("INSERT OR IGNORE INTO nudges_seen (nudge_key, created_at) VALUES (?, ?)")
+    .run(key, nowIso());
 }
 
 /* ---------- daily task letter ---------- */
@@ -283,10 +273,10 @@ function dayKey(d = new Date()): string {
 
 /** The day's task intelligence as a personal letter: open tasks grouped by
  *  note, plus notes wrapped up in the last 7 days. Composed fresh on read. */
-export function composeDailyLetter(memberId: number): DailyLetter {
+export function composeDailyLetter(): DailyLetter {
   const db = getDb();
   const dk = dayKey();
-  const notes = db.query("SELECT * FROM notes WHERE member_id = ? ORDER BY updated_at DESC").all(memberId) as any[];
+  const notes = db.query("SELECT * FROM notes ORDER BY updated_at DESC").all() as any[];
   const withTasks = notes
     .map((n) => ({ n, tasks: parseTasks(n.body) }))
     .filter((x) => x.tasks.length > 0);

@@ -1,5 +1,6 @@
 // api.test.ts — end-to-end over real HTTP against a spawned server
-// with a fresh data dir. Covers the full circle lifecycle.
+// with a fresh data dir. Covers the single-user notepad API: notes CRUD,
+// comments, letters, nudges, mail config, and backup. No auth anywhere.
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,18 +9,18 @@ import { join } from "node:path";
 const PORT = 31313;
 const BASE = `http://localhost:${PORT}`;
 let proc: any;
-let ownerTok = "", ariTok = "", inviteCode = "";
-let noteId = 0, secondNoteId = 0;
+let noteId = 0;
 
-async function api(path: string, opts: any = {}, tok = ""): Promise<{ status: number; data: any }> {
-  const headers: any = { "Content-Type": "application/json" };
-  if (tok) headers["Authorization"] = "Bearer " + tok;
-  const res = await fetch(BASE + path, { ...opts, headers });
+async function api(path: string, opts: any = {}): Promise<{ status: number; data: any }> {
+  const res = await fetch(BASE + path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+  });
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };
 }
-const post = (p: string, body: any, tok = "") => api(p, { method: "POST", body: JSON.stringify(body) }, tok);
-const patch = (p: string, body: any, tok = "") => api(p, { method: "PATCH", body: JSON.stringify(body) }, tok);
+const post = (p: string, body: any) => api(p, { method: "POST", body: JSON.stringify(body) });
+const patch = (p: string, body: any) => api(p, { method: "PATCH", body: JSON.stringify(body) });
 
 beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), "abba-test-"));
@@ -40,175 +41,174 @@ beforeAll(async () => {
 });
 afterAll(() => { try { proc.kill(); } catch { /* already down */ } });
 
-describe("circle bootstrap", () => {
-  test("no circle yet", async () => {
-    const { data } = await api("/api/status");
-    expect(data.hasCircle).toBe(false);
-  });
-  test("init creates circle + owner", async () => {
-    const { status, data } = await post("/api/circle/init", { name: "Test Circle", ownerName: "Sam" });
+describe("status", () => {
+  test("no auth required, fresh notepad", async () => {
+    const { status, data } = await api("/api/status");
     expect(status).toBe(200);
-    expect(data.token).toMatch(/^abba_/);
-    expect(data.member.role).toBe("owner");
-    expect(data.circle.inviteCode).toMatch(/^abba-/);
-    ownerTok = data.token; inviteCode = data.circle.inviteCode;
-  });
-  test("init twice is refused", async () => {
-    const { status } = await post("/api/circle/init", { name: "X", ownerName: "Y" });
-    expect(status).toBe(409);
-  });
-  test("join with wrong code fails", async () => {
-    const { status } = await post("/api/join", { code: "abba-nope", name: "Ari" });
-    expect(status).toBe(403);
-  });
-  test("join with code works", async () => {
-    const { status, data } = await post("/api/join", { code: inviteCode, name: "Ari" });
-    expect(status).toBe(200);
-    expect(data.member.role).toBe("member");
-    ariTok = data.token;
-  });
-  test("me + members + circle", async () => {
-    expect((await api("/api/me", {}, ownerTok)).data.member.name).toBe("Sam");
-    expect((await api("/api/members", {}, ownerTok)).data.members.length).toBe(2);
-    expect((await api("/api/circle", {}, ownerTok)).data.inviteCode).toBe(inviteCode);
+    expect(data.ok).toBe(true);
+    expect(data.notes).toBe(0);
   });
 });
 
-describe("notes lifecycle", () => {
-  test("create auto-titles from heading", async () => {
-    const { status, data } = await post("/api/notes", { body: "## Launch plan\nShip the marketplace in October." }, ownerTok);
+describe("notes", () => {
+  test("empty body is refused", async () => {
+    const { status } = await post("/api/notes", { body: "   " });
+    expect(status).toBe(400);
+  });
+  test("create auto-titles", async () => {
+    const { status, data } = await post("/api/notes", { body: "The quick brown fox jumps over the lazy dog" });
     expect(status).toBe(201);
-    expect(data.note.title).toBe("Launch plan");
+    expect(data.note.title.length).toBeGreaterThan(0);
     expect(data.note.status).toBe("seed");
-    expect(data.note.shared).toBe(false);
-    expect(data.note.readMins).toBe(1);
     noteId = data.note.id;
   });
-  test("create requires a body", async () => {
-    expect((await post("/api/notes", { body: "   " }, ownerTok)).status).toBe(400);
+  test("list returns the note", async () => {
+    const { data } = await api("/api/notes");
+    expect(data.notes.length).toBe(1);
+    expect(data.notes[0].id).toBe(noteId);
   });
-  test("mine vs circle scopes", async () => {
-    expect((await api("/api/notes?scope=mine", {}, ownerTok)).data.notes.length).toBe(1);
-    expect((await api("/api/notes?scope=circle", {}, ownerTok)).data.notes.length).toBe(0);
+  test("get one", async () => {
+    const { data } = await api(`/api/notes/${noteId}`);
+    expect(data.note.id).toBe(noteId);
   });
-  test("private note is invisible to others", async () => {
-    expect((await api(`/api/notes/${noteId}`, {}, ariTok)).status).toBe(404);
+  test("get missing -> 404", async () => {
+    const { status } = await api("/api/notes/99999");
+    expect(status).toBe(404);
   });
-  test("others cannot edit your note", async () => {
-    await post(`/api/notes/${noteId}/share`, {}, ownerTok); // visible to Ari now
-    const { status } = await patch(`/api/notes/${noteId}`, { title: "Hijacked" }, ariTok);
-    expect(status).toBe(403);
-    await post(`/api/notes/${noteId}/unshare`, {}, ownerTok); // back to private for the next tests
-  });
-  test("share publishes to the circle", async () => {
-    const { data } = await post(`/api/notes/${noteId}/share`, {}, ownerTok);
-    expect(data.note.shared).toBe(true);
-    const feed = (await api("/api/notes?scope=circle", {}, ariTok)).data.notes;
-    expect(feed.length).toBe(1);
-    expect(feed[0].title).toBe("Launch plan");
-  });
-  test("status advance logs an event", async () => {
-    const { data } = await patch(`/api/notes/${noteId}`, { status: "sprout" }, ownerTok);
+  test("patch status logs an event", async () => {
+    const { data } = await patch(`/api/notes/${noteId}`, { status: "sprout" });
     expect(data.note.status).toBe("sprout");
   });
-  test("bad status rejected", async () => {
-    expect((await patch(`/api/notes/${noteId}`, { status: "flying" }, ownerTok)).status).toBe(400);
+  test("patch body + tags", async () => {
+    const { data } = await patch(`/api/notes/${noteId}`, { body: "updated body", tags: ["test", "demo"] });
+    expect(data.note.body).toBe("updated body");
+    expect(data.note.tags).toEqual(["test", "demo"]);
   });
-  test("comment + reaction from a member", async () => {
-    const c = await post(`/api/notes/${noteId}/comments`, { body: "This feels right." }, ariTok);
-    expect(c.status).toBe(201);
-    expect(c.data.note.comments.length).toBe(1);
-    const r = await post(`/api/notes/${noteId}/react`, { kind: "felt" }, ariTok);
-    expect(r.data.note.reactionCounts.felt).toBe(1);
-    expect(r.data.note.myReactions).toContain("felt");
-    const r2 = await post(`/api/notes/${noteId}/react`, { kind: "felt" }, ariTok);
-    expect(r2.data.note.reactionCounts.felt || 0).toBe(0); // toggle off
+  test("patch with nothing -> 400", async () => {
+    const { status } = await patch(`/api/notes/${noteId}`, {});
+    expect(status).toBe(400);
   });
-  test("related finds shared language", async () => {
-    const { data } = await post("/api/notes",
-      { body: "## Marketplace marketing\nThe marketing push for the October marketplace launch needs real budget." }, ownerTok);
-    secondNoteId = data.note.id;
-    await post(`/api/notes/${secondNoteId}/share`, {}, ownerTok);
-    const rel = (await api(`/api/notes/${noteId}/related`, {}, ownerTok)).data.related;
-    expect(rel.map((r: any) => r.id)).toContain(secondNoteId);
-  });
-  test("private notes never surface as related", async () => {
-    const { data } = await post("/api/notes", { body: "## Secret marketplace scheme\nmarketplace launch October budget push" }, ariTok);
-    const rel = (await api(`/api/notes/${noteId}/related`, {}, ownerTok)).data.related;
-    expect(rel.map((r: any) => r.id)).not.toContain(data.note.id);
-  });
-  test("unshare pulls it back", async () => {
-    await post(`/api/notes/${noteId}/unshare`, {}, ownerTok);
-    expect((await api("/api/notes?scope=circle", {}, ariTok)).data.notes.map((n: any) => n.id)).not.toContain(noteId);
-    // re-share for the digest tests below
-    await post(`/api/notes/${noteId}/share`, {}, ownerTok);
-  });
-  test("export returns markdown", async () => {
-    const res = await fetch(`${BASE}/api/notes/${noteId}/export`, { headers: { Authorization: "Bearer " + ownerTok } });
+  test("export downloads markdown", async () => {
+    const res = await fetch(`${BASE}/api/notes/${noteId}/export`);
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(text.startsWith("# Launch plan")).toBe(true);
-  });
-  test("delete removes it", async () => {
-    expect((await api(`/api/notes/${secondNoteId}`, { method: "DELETE" }, ownerTok)).status).toBe(200);
-    expect((await api(`/api/notes/${secondNoteId}`, {}, ownerTok)).status).toBe(404);
+    expect(text).toContain("updated body");
   });
 });
 
-describe("digest + nudges", () => {
-  test("digest composes from the week", async () => {
-    const { data } = await api("/api/digest", {}, ownerTok);
-    expect(data.digest.title).toBe("This week in the circle");
-    expect(data.digest.empty).toBe(false);
-    const heads = data.digest.sections.map((s: any) => s.heading);
-    expect(heads).toContain("New seeds");
-    // lines are markdown; the client renders them (titles are raw here, escaped client-side)
-    const seeds = data.digest.sections.find((s: any) => s.heading === "New seeds");
-    expect(seeds.lines[0]).toMatch(/^\*\*.+\*\* — /);
+describe("comments", () => {
+  test("add and remove a margin note", async () => {
+    const { status, data } = await post(`/api/notes/${noteId}/comments`, { body: "a margin thought" });
+    expect(status).toBe(201);
+    expect(data.note.comments.length).toBe(1);
+    expect(data.note.comments[0].body).toBe("a margin thought");
+    const cid = data.commentId;
+    const del = await api(`/api/notes/${noteId}/comments/${cid}`, { method: "DELETE" });
+    expect(del.status).toBe(200);
+    expect(del.data.note.comments.length).toBe(0);
   });
-  test("digest editions list + read a past edition", async () => {
-    // composing the current digest caches it
-    await api("/api/digest", {}, ownerTok);
-    const { data } = await api("/api/digests", {}, ownerTok);
-    expect(data.digests.length).toBeGreaterThanOrEqual(1);
-    const wk = data.digests[0].weekKey;
-    expect(wk).toMatch(/^\d{4}-W\d{2}$/);
-    const one = await api(`/api/digest?week=${wk}`, {}, ownerTok);
-    expect(one.data.digest.weekKey).toBe(wk);
-    expect(one.status).toBe(200);
-    expect((await api("/api/digest?week=1999-W01", {}, ownerTok)).status).toBe(404);
-  });
-  test("digest has no AI fingerprints", async () => {
-    const { data } = await api("/api/digest", {}, ownerTok);
-    const text = JSON.stringify(data.digest).toLowerCase();
-    for (const w of ["ai-generated", "as an ai", "language model", "🤖", "✨"]) expect(text.includes(w)).toBe(false);
-  });
-  test("nudges list + dismiss", async () => {
-    const n1 = (await api("/api/nudges", {}, ownerTok)).data.nudges;
-    expect(Array.isArray(n1)).toBe(true);
-    if (n1.length) {
-      await post("/api/nudges/dismiss", { key: n1[0].key }, ownerTok);
-      const n2 = (await api("/api/nudges", {}, ownerTok)).data.nudges;
-      expect(n2.map((n: any) => n.key)).not.toContain(n1[0].key);
-    }
+  test("empty comment refused", async () => {
+    const { status } = await post(`/api/notes/${noteId}/comments`, { body: "  " });
+    expect(status).toBe(400);
   });
 });
 
-describe("intimacy guardrails", () => {
-  test("circle caps at 12", async () => {
-    for (let i = 0; i < 10; i++) {
-      const r = await post("/api/join", { code: inviteCode, name: "Member" + i });
-      expect(r.status).toBe(200);
-    }
-    const full = await post("/api/join", { code: inviteCode, name: "TooMany" });
-    expect(full.status).toBe(403);
-    expect(full.data.error).toMatch(/full/);
+describe("related", () => {
+  test("finds notes with shared language", async () => {
+    const a = await post("/api/notes", { body: "sourdough starter feeding schedule" });
+    await post("/api/notes", { body: "my sourdough starter smells funky" });
+    await post("/api/notes", { body: "completely unrelated quantum knitting" });
+    const { data } = await api(`/api/notes/${a.data.note.id}/related`);
+    expect(data.related.length).toBeGreaterThan(0);
   });
-  test("presence heartbeat", async () => {
-    const { data } = await api("/api/presence", {}, ownerTok);
-    expect(data.here.map((h: any) => h.name)).toContain("Ari");
+});
+
+describe("letters and nudges", () => {
+  test("today letter composes", async () => {
+    const { data } = await api("/api/digest/today");
+    expect(data.digest.title).toBe("Today");
   });
-  test("unauthenticated requests are refused", async () => {
-    expect((await api("/api/notes")).status).toBe(401);
+  test("digests list", async () => {
+    const { data } = await api("/api/digests");
+    expect(Array.isArray(data.digests)).toBe(true);
+  });
+  test("nudges list and dismiss", async () => {
+    const { data } = await api("/api/nudges");
+    expect(Array.isArray(data.nudges)).toBe(true);
+    const d = await post("/api/nudges/dismiss", { key: "nope-never" });
+    expect(d.status).toBe(200);
+  });
+});
+
+describe("share without mail", () => {
+  test("share requires a connected mail account", async () => {
+    const { status, data } = await post(`/api/notes/${noteId}/share`, { emails: ["a@example.com"] });
+    expect(status).toBe(400);
+    expect(data.error).toMatch(/mail/i);
+  });
+  test("bad emails rejected", async () => {
+    const { status } = await post(`/api/notes/${noteId}/share`, { emails: ["not-an-email"] });
+    expect(status).toBe(400);
+  });
+  test("share history starts empty", async () => {
+    const { data } = await api("/api/shares");
+    expect(data.shares).toEqual([]);
+  });
+  test("shared inbox starts empty", async () => {
+    const { data } = await api("/api/shared");
+    expect(data.shared).toEqual([]);
+  });
+});
+
+describe("imap config", () => {
+  test("unconfigured at first", async () => {
+    const { data } = await api("/api/imap");
+    expect(data.configured).toBe(false);
+  });
+  test("missing fields refused", async () => {
+    const { status } = await post("/api/imap", { host: "x" });
+    expect(status).toBe(400);
+  });
+  test("unreachable host -> 502, nothing saved", async () => {
+    const { status } = await post("/api/imap", {
+      host: "127.0.0.1", port: 1, username: "u", password: "p", folder: "Notes",
+    });
+    expect(status).toBe(502);
+    const { data } = await api("/api/imap");
+    expect(data.configured).toBe(false);
+  });
+  test("delete when unconfigured is fine", async () => {
+    const { status } = await api("/api/imap", { method: "DELETE" });
+    expect(status).toBe(200);
+  });
+});
+
+describe("backup", () => {
+  test("export is well-formed", async () => {
+    const res = await fetch(`${BASE}/api/backup`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.app).toBe("abba");
+    expect(data.notes.length).toBeGreaterThan(0);
+  });
+  test("import adds notes", async () => {
+    const before = (await api("/api/notes")).data.notes.length;
+    const { data } = await post("/api/backup", {
+      app: "abba", version: 1, notes: [{ title: "Restored", body: "from backup", tags: ["x"], status: "seed" }],
+    });
+    expect(data.imported).toBe(1);
+    expect((await api("/api/notes")).data.notes.length).toBe(before + 1);
+  });
+  test("non-backup rejected", async () => {
+    const { status } = await post("/api/backup", { app: "nope" });
+    expect(status).toBe(400);
+  });
+});
+
+describe("delete note", () => {
+  test("note is gone afterwards", async () => {
+    const { status } = await api(`/api/notes/${noteId}`, { method: "DELETE" });
+    expect(status).toBe(200);
+    expect((await api(`/api/notes/${noteId}`)).status).toBe(404);
   });
 });

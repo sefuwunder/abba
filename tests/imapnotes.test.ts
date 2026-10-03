@@ -125,26 +125,22 @@ function fakeRaw(o: { subject: string; body: string; date: string; abbaId?: stri
 // ---------- db helpers ----------
 
 let db: Database;
-let memberId: number;
 
 function freshDb() {
   db = new Database(":memory:");
   __setDbForTests(db);
-  const m = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES ('Sam', '#fff', ?, 'owner', ?, '')")
-    .run("tok-" + Math.random(), nowIso());
-  memberId = Number(m.lastInsertRowid);
 }
 
 function addAccount(port: number) {
-  db.query(`INSERT INTO imap_accounts (member_id, host, port, username, password, folder, updated_at)
-    VALUES (?, '127.0.0.1', ?, 'sam', 'secret', 'Notes', ?)`)
-    .run(memberId, port, nowIso());
+  db.query(`INSERT INTO imap_account (id, host, port, username, password, folder, updated_at)
+    VALUES (1, '127.0.0.1', ?, 'sam', 'secret', 'Notes', ?)`)
+    .run(port, nowIso());
 }
 
 function addNote(title: string, body: string, updatedAt: string, tags = "[]", status = "seed"): number {
-  const r = db.query(`INSERT INTO notes (member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)`)
-    .run(memberId, title, body, tags, status, updatedAt, updatedAt);
+  const r = db.query(`INSERT INTO notes (title, body, tags, status, read_mins, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 1, ?, ?)`)
+    .run(title, body, tags, status, updatedAt, updatedAt);
   return Number(r.lastInsertRowid);
 }
 
@@ -213,13 +209,13 @@ describe("syncImapAccount", () => {
     fake = startFake([]);
     addAccount(fake.port);
     addNote("Shopping", "oat milk", "2026-10-02T12:00:00.000Z");
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.errors).toEqual([]);
     expect(r.pushed).toBe(1);
     expect(fake.appends.length).toBe(1);
     expect(fake.appends[0]).toContain("X-Abba-Id: note-1");
     expect(fake.appends[0]).toContain("Subject: Shopping");
-    const acct = db.query("SELECT last_sync_at, last_error FROM imap_accounts WHERE member_id = ?").get(memberId) as any;
+    const acct = db.query("SELECT last_sync_at, last_error FROM imap_account WHERE id = 1").get() as any;
     expect(acct.last_sync_at).not.toBe("");
     expect(acct.last_error).toBe("");
     fake.stop();
@@ -232,10 +228,10 @@ describe("syncImapAccount", () => {
       raw: fakeRaw({ subject: "From Apple Mail", body: "written on my phone", date: "Fri, 02 Oct 2026 14:00:00 +0000", tags: "phone", status: "seed" }),
     }]);
     addAccount(fake.port);
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.errors).toEqual([]);
     expect(r.pulled).toBe(1);
-    const n = db.query("SELECT * FROM notes WHERE member_id = ?").get(memberId) as any;
+    const n = db.query("SELECT * FROM notes").get() as any;
     expect(n.title).toBe("From Apple Mail");
     expect(n.body).toBe("written on my phone");
     expect(JSON.parse(n.tags)).toEqual(["phone"]);
@@ -243,7 +239,7 @@ describe("syncImapAccount", () => {
     expect(fake.appends.length).toBe(1);
     expect(fake.appends[0]).toContain("X-Abba-Id: note-" + n.id);
     expect(fake.stores.some((s) => s.includes("11") && s.includes("Deleted"))).toBe(true);
-    const r2 = await syncImapAccount(memberId, { insecure: true });
+    const r2 = await syncImapAccount({ insecure: true });
     expect(r2.pushed).toBe(0);
     expect(r2.pulled).toBe(0);
     fake.stop();
@@ -258,7 +254,7 @@ describe("syncImapAccount", () => {
     }]);
     addAccount(fake.port);
     db.query("UPDATE notes SET body = 'v2', updated_at = '2026-10-02T12:00:00.000Z' WHERE id = ?").run(id);
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.pushed).toBe(1);
     expect(r.pulled).toBe(0);
     expect(fake.appends.length).toBe(1);
@@ -275,7 +271,7 @@ describe("syncImapAccount", () => {
       raw: fakeRaw({ subject: "Draft (edited)", body: "new from mail", date: "Fri, 02 Oct 2026 14:00:00 +0000", abbaId: "note-" + id, tags: "mail", status: "motion" }),
     }]);
     addAccount(fake.port);
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.pulled).toBe(1);
     expect(r.pushed).toBe(0);
     const n = note(id);
@@ -294,7 +290,7 @@ describe("syncImapAccount", () => {
       raw: fakeRaw({ subject: "Steady", body: "same", date: "Fri, 02 Oct 2026 12:00:00 +0000", abbaId: "note-" + id }),
     }]);
     addAccount(fake.port);
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.pushed).toBe(0);
     expect(r.pulled).toBe(0);
     expect(r.deleted).toBe(0);
@@ -309,7 +305,7 @@ describe("syncImapAccount", () => {
       raw: fakeRaw({ subject: "Gone", body: "note was deleted in abba", date: "Fri, 02 Oct 2026 12:00:00 +0000", abbaId: "note-999" }),
     }]);
     addAccount(fake.port);
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.deleted).toBe(1);
     expect(fake.stores.some((s) => s.includes("51") && s.includes("Deleted"))).toBe(true);
     fake.stop();
@@ -318,20 +314,20 @@ describe("syncImapAccount", () => {
   test("connection failure is reported, not thrown", async () => {
     freshDb();
     addAccount(1); // nothing listening
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.errors.length).toBe(1);
-    const acct = db.query("SELECT last_error FROM imap_accounts WHERE member_id = ?").get(memberId) as any;
+    const acct = db.query("SELECT last_error FROM imap_account WHERE id = 1").get() as any;
     expect(acct.last_error).not.toBe("");
   });
 
   test("missing folder is created on first connect", async () => {
     freshDb();
     fake = startFake([]); // only INBOX exists; Notes does not
-    db.query(`INSERT INTO imap_accounts (member_id, host, port, username, password, folder, updated_at)
-      VALUES (?, '127.0.0.1', ?, 'sam', 'secret', 'Notes', ?)`)
-      .run(memberId, fake.port, nowIso());
+    db.query(`INSERT INTO imap_account (id, host, port, username, password, folder, updated_at)
+      VALUES (1, '127.0.0.1', ?, 'sam', 'secret', 'Notes', ?)`)
+      .run(fake.port, nowIso());
     addNote("First", "hello", "2026-10-02T12:00:00.000Z");
-    const r = await syncImapAccount(memberId, { insecure: true });
+    const r = await syncImapAccount({ insecure: true });
     expect(r.errors).toEqual([]);
     expect(r.pushed).toBe(1);
     fake.stop();

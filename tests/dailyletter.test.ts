@@ -5,20 +5,16 @@ import { __setDbForTests, nowIso } from "../src/db";
 import { parseTasks, composeDailyLetter } from "../src/mind";
 
 let db: Database;
-let memberId: number;
 
 function freshDb() {
   db = new Database(":memory:");
   __setDbForTests(db);
-  const m = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES ('Sam', '#fff', ?, 'owner', ?, '')")
-    .run("tok-" + Math.random(), nowIso());
-  memberId = Number(m.lastInsertRowid);
 }
 
 function addNote(title: string, body: string, updatedAt: string): number {
-  const r = db.query(`INSERT INTO notes (member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
-    VALUES (?, ?, ?, '[]', 'seed', 0, 1, ?, ?)`)
-    .run(memberId, title, body, updatedAt, updatedAt);
+  const r = db.query(`INSERT INTO notes (title, body, tags, status, read_mins, created_at, updated_at)
+    VALUES (?, ?, '[]', 'seed', 1, ?, ?)`)
+    .run(title, body, updatedAt, updatedAt);
   return Number(r.lastInsertRowid);
 }
 
@@ -41,9 +37,9 @@ describe("parseTasks", () => {
 describe("composeDailyLetter", () => {
   beforeEach(freshDb);
 
-  test("empty when the member has no tasks", () => {
+  test("empty when there are no tasks", () => {
     addNote("Prose", "no checklists here", new Date().toISOString());
-    const d = composeDailyLetter(memberId);
+    const d = composeDailyLetter();
     expect(d.empty).toBe(true);
     expect(d.title).toBe("Today");
     expect(d.dayKey).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -51,7 +47,7 @@ describe("composeDailyLetter", () => {
 
   test("open tasks group by note with progress", () => {
     addNote("Shopping", "- [ ] oat milk\n- [x] eggs\n- [ ] bread", new Date().toISOString());
-    const d = composeDailyLetter(memberId);
+    const d = composeDailyLetter();
     expect(d.empty).toBe(false);
     const open = d.sections.find((s) => s.heading === "Still open")!;
     expect(open).toBeDefined();
@@ -65,7 +61,7 @@ describe("composeDailyLetter", () => {
 
   test("fully-done notes land in Wrapped up", () => {
     addNote("Done thing", "- [x] a\n- [x] b", new Date().toISOString());
-    const d = composeDailyLetter(memberId);
+    const d = composeDailyLetter();
     const done = d.sections.find((s) => s.heading === "Wrapped up")!;
     expect(done.lines[0]).toContain("Done thing");
     expect(done.lines[0]).toContain("all 2 done");
@@ -75,17 +71,13 @@ describe("composeDailyLetter", () => {
   test("stale done notes stay out of the letter", () => {
     const old = new Date(Date.now() - 30 * 864e5).toISOString();
     addNote("Ancient", "- [x] a", old);
-    const d = composeDailyLetter(memberId);
+    const d = composeDailyLetter();
     expect(d.sections.find((s) => s.heading === "Wrapped up")).toBeUndefined();
   });
 
-  test("other members' notes are excluded", () => {
-    const m2 = db.query("INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES ('Jo', '#000', ?, 'member', ?, '')")
-      .run("tok2-" + Math.random(), nowIso());
-    db.query(`INSERT INTO notes (member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
-      VALUES (?, 'Theirs', '- [ ] secret task', '[]', 'seed', 0, 1, ?, ?)`)
-      .run(Number(m2.lastInsertRowid), new Date().toISOString(), new Date().toISOString());
-    const d = composeDailyLetter(memberId);
-    expect(d.empty).toBe(true);
+  test("a single user's notes all count", () => {
+    addNote("Mine", "- [ ] visible task", new Date().toISOString());
+    const d = composeDailyLetter();
+    expect(d.empty).toBe(false);
   });
 });

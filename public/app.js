@@ -1,12 +1,12 @@
-/* Abba client — modeled after Apple Notes: folders, lists, large titles,
-   hairlines, quiet yellow. The intelligence stays invisible: auto-titles,
-   related ideas, the weekly letters and nudges render as plain interface. */
+/* Abba client — a quiet single-user notepad, modeled after Apple Notes:
+   folders, lists, large titles, hairlines, quiet gold. No sign-in (access is
+   gated one layer up, by Deck). Sharing is email through IMAP. */
 "use strict";
 const $ = (s, el) => (el || document).querySelector(s);
 const app = $("#app"), tabbar = $("#tabbar"), toastEl = $("#toast");
-const state = { me: null, circle: null, filter: "", here: [] };
+const state = { filter: "" };
 
-/* ---------- tasks: markdown checklists drive the smart folders ---------- */
+/* ---------- tasks: markdown checklists drive the daily letter ---------- */
 const TASK_RE = /^(\s*[-*]\s+)\[([ xX])\](\s+.*)$/;
 function taskStats(body) {
   const lines = String(body || "").split("\n");
@@ -20,7 +20,8 @@ function taskStats(body) {
   return { total, open, done: total - open };
 }
 /** Flip the nth checklist item in a body. Returns the new body. */
-function toggleTask(body, idx) {  const lines = String(body || "").split("\n");
+function toggleTask(body, idx) {
+  const lines = String(body || "").split("\n");
   let n = -1, inPre = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -39,10 +40,6 @@ function toggleTask(body, idx) {  const lines = String(body || "").split("\n");
 }
 
 /* ---------- smart topic folders: max 3, from tags + content ---------- */
-/* Topics come from the member's tags. A note belongs to a topic when it
- * carries the tag, mentions the tag word, or mentions one of the topic's
- * signature words — the distinctive vocabulary of the tag's own notes.
- * Ranked by how many notes gather round, recency breaks ties. */
 const STOPWORDS = new Set(("a,an,the,and,or,but,in,on,at,to,for,of,with,is,are,was,were,be,been,being," +
   "have,has,had,do,does,did,will,would,should,could,this,that,these,those,it,its,as,by,from," +
   "not,no,yes,if,then,than,so,such,into,out,up,down,over,under,again,once,here,there,when," +
@@ -178,62 +175,16 @@ function renderMermaid() {
       s.onload = res; s.onerror = rej;
       document.head.appendChild(s);
     });
-  }
-  mermaidLoading.then(run).catch(() => { mermaidLoading = null; });
-}
-
-/* ---------- auth: one token per circle ---------- */
-function circleStore() {
-  try { return JSON.parse(localStorage.getItem("abba_circles") || "{}"); }
-  catch (e) { return {}; }
-}
-function saveCircleStore(s) { try { localStorage.setItem("abba_circles", JSON.stringify(s)); } catch (e) {} }
-function activeCircleId() { return localStorage.getItem("abba_active_circle"); }
-function setActiveCircle(id) { try { localStorage.setItem("abba_active_circle", String(id)); } catch (e) {} }
-function activeToken() {
-  const s = circleStore();
-  const e = s[activeCircleId() || ""];
-  return e ? e.token : null;
-}
-function rememberCircle(id, token, name) {
-  const s = circleStore();
-  s[id] = { token, name };
-  saveCircleStore(s);
-  setActiveCircle(id);
-}
-function forgetCircle(id) {
-  const s = circleStore();
-  delete s[String(id)];
-  saveCircleStore(s);
-  if (String(activeCircleId()) === String(id)) {
-    const rest = Object.keys(s);
-    if (rest.length) setActiveCircle(rest[0]);
-    else { try { localStorage.removeItem("abba_active_circle"); } catch (e) {} }
+    mermaidLoading.then(run, () => {});
+  } else {
+    mermaidLoading.then(run, () => {});
   }
 }
-function myCircles() {
-  const s = circleStore();
-  return Object.keys(s).map(id => ({ id, name: s[id].name }));
-}
-// one-time migration from the single-token era
-async function migrateLegacyToken() {
-  const old = localStorage.getItem("abba_token");
-  if (!old || Object.keys(circleStore()).length) return;
-  try {
-    const headers = { Authorization: "Bearer " + old };
-    const me = await (await fetch("/api/me", { headers })).json();
-    const circle = await (await fetch("/api/circle", { headers })).json();
-    if (me.member && circle.id) rememberCircle(circle.id, old, circle.name);
-  } catch (e) { /* token was dead; welcome screen will show */ }
-  try { localStorage.removeItem("abba_token"); } catch (e) {}
-}
 
-/* ---------- api ---------- */
+/* ---------- api (no auth — access is gated by Deck) ---------- */
 async function api(path, opts) {
   opts = opts || {};
   const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
-  const tok = activeToken();
-  if (tok) headers["Authorization"] = "Bearer " + tok;
   const res = await fetch(path, Object.assign({}, opts, { headers }));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
@@ -260,32 +211,30 @@ function relTime(iso) {
 }
 function greeting() {
   const h = new Date().getHours();
-  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  if (h < 5) return "Up late";
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
 }
-/* ISO week key, mirroring the server (for "This week" labels). */
 function weekKey(d) {
   d = d || new Date();
-  const p = (n) => String(n).padStart(2, "0");
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const day = (t.getUTCDay() + 6) % 7;
-  t.setUTCDate(t.getUTCDate() - day + 3);
-  const first = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
-  const week = 1 + Math.round(((t.getTime() - first.getTime()) / 864e5 - 3 + ((first.getUTCDay() + 6) % 7)) / 7);
-  return t.getUTCFullYear() + "-W" + p(week);
+  t.setUTCDate(t.getUTCDate() - day);
+  return t.toISOString().slice(0, 10);
 }
 function weekRangeLabel(wk) {
-  const m = String(wk).match(/(\d+)-W(\d+)/);
+  const m = wk.match(/(\d+)-(\d+)-(\d+)/);
   if (!m) return wk;
-  const t = new Date(Date.UTC(+m[1], 0, 4));
-  const day = (t.getUTCDay() + 6) % 7; // Mon=0..Sun=6
-  t.setUTCDate(t.getUTCDate() - day + (+m[2] - 1) * 7); // Monday of week 1, plus weeks
+  const t = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const day = (t.getUTCDay() + 6) % 7;
+  t.setUTCDate(t.getUTCDate() - day + (+m[2] - 1) * 7);
   const sun = new Date(t.getTime() + 6 * 864e5);
   const f = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
   return f(t) + " – " + f(sun);
 }
 const STATUS_LABEL = { seed: "Seed", sprout: "Sprout", motion: "In motion", decided: "Decided", resting: "Resting" };
 const STATUS_FLOW = ["seed", "sprout", "motion", "decided"];
-const REACT_META = { felt: ["❤️", "felt this"], spark: ["💡", "sparked"], yes: ["🙌", "yes"] };
 
 function plainExcerpt(body) {
   const line = String(body || "").split("\n").filter(l => l.trim() && !/^#{1,3}\s/.test(l.trim()))[0] || "";
@@ -295,28 +244,24 @@ function folderSvg(kind) {
   if (kind === "letters") {
     return '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2.5" fill="#E3B23C"/><path d="M3.5 7.5 12 13.5l8.5-6" stroke="#B9862A" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
+  if (kind === "shared") {
+    return '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M12 3v10m0-10L7.5 7.5M12 3l4.5 4.5" stroke="#8C6A2F" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 12v7a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7" stroke="#8C6A2F" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
+  }
   return '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M2.5 6.5a2 2 0 0 1 2-2h5l2 2.4h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z" fill="#EBCB5E"/><path d="M2.5 9.5h19V18a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z" fill="#E3B23C"/></svg>';
 }
 
 /* ---------- shell ---------- */
 const TABS = [
   ["#/folders", "✎", "Notes", "notes"],
-  ["#/members", "◯", "Circle", "circle"],
+  ["#/list/shared", "📥", "Shared", "shared"],
+  ["#/settings", "⚙", "Settings", "settings"],
 ];
 function renderTabs(active) {
   tabbar.hidden = false;
-  const tabs = TABS.map(([href, g, label, key]) => {
-    const show = key === "circle" && state.circle ? state.circle.name : label;
-    return `<button class="tab${key === active ? " on" : ""}" data-go="${href}"><span class="g">${g}</span>${esc(show)}</button>`;
-  });
-  tabbar.innerHTML = tabs.join("");
+  tabbar.innerHTML = TABS.map(([href, g, label, key]) =>
+    `<button class="tab${key === active ? " on" : ""}" data-go="${href}"><span class="g">${g}</span>${esc(label)}</button>`
+  ).join("");
   tabbar.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
-}
-function presenceLine() {
-  if (!state.here.length) return "";
-  const names = state.here.map(h => esc(h.name));
-  const who = names.length <= 2 ? names.join(" and ") : names.slice(0, 2).join(", ") + ` and ${names.length - 2} more`;
-  return `<p class="presence"><span class="pulse"></span>${who} ${names.length === 1 ? "is" : "are"} here now</p>`;
 }
 function nudgeHtml(nudges) {
   return (nudges || []).map(n => `
@@ -337,23 +282,22 @@ function bindNudges(root) {
 /* ---------- folders (home) ---------- */
 async function viewFolders() {
   renderTabs("notes");
-  const [nudges, mine, circle, letters] = await Promise.all([
+  const [nudges, notes, shared, letters] = await Promise.all([
     api("/api/nudges").then(d => d.nudges).catch(() => []),
-    api("/api/notes?scope=mine").then(d => d.notes).catch(() => []),
-    api("/api/notes?scope=circle").then(d => d.notes).catch(() => []),
+    api("/api/notes").then(d => d.notes).catch(() => []),
+    api("/api/shared").then(d => d.shared).catch(() => []),
     api("/api/digests").then(d => d.digests).catch(() => []),
   ]);
-  const first = esc(state.me.name.split(" ")[0]);
-  const topics = topicFolders(mine);
+  const topics = topicFolders(notes);
   app.innerHTML = `
-    <h1 class="large-greet">${greeting()},<br>${first}.</h1>
+    <h1 class="large-greet">${greeting()}.<br>Your notepad.</h1>
     <div id="nudges">${nudgeHtml(nudges)}</div>
     <p class="section-label">Abba</p>
     <div class="group">
-      <div class="frow" data-go="#/list/mine">${folderSvg("folder")}
-        <span class="frow-name">My Notepad</span><span class="frow-count">${mine.length}</span><span class="chev">›</span></div>
-      <div class="frow" data-go="#/list/circle">${folderSvg("folder")}
-        <span class="frow-name">The Circle</span><span class="frow-count">${circle.length}</span><span class="chev">›</span></div>
+      <div class="frow" data-go="#/list/notes">${folderSvg("folder")}
+        <span class="frow-name">Notepad</span><span class="frow-count">${notes.length}</span><span class="chev">›</span></div>
+      <div class="frow" data-go="#/list/shared">${folderSvg("shared")}
+        <span class="frow-name">Shared with me</span><span class="frow-count">${shared.length}</span><span class="chev">›</span></div>
       <div class="frow" data-go="#/list/letters">${folderSvg("letters")}
         <span class="frow-name">Weekly Letters</span><span class="frow-count">${letters.length}</span><span class="chev">›</span></div>
     </div>
@@ -364,39 +308,31 @@ async function viewFolders() {
       <div class="frow" data-go="#/list/topic/${encodeURIComponent(t.tag)}"><span class="frow-ic">◈</span>
         <span class="frow-name">${esc(capTag(t.tag))}</span><span class="frow-count">${t.notes.length}</span><span class="chev">›</span></div>`).join("")}
     </div>` : ""}
-    <p class="section-label">Circle</p>
-    <div class="group">
-      <div class="frow" data-go="#/members"><span class="frow-ic">◯</span>
-        <span class="frow-name">Members</span><span class="frow-count"></span><span class="chev">›</span></div>
-    </div>
-    <p class="foot-note">Small circles · stay intimate by design.</p>`;
+    <p class="foot-note">A quiet notepad. Sharing is email — nothing else leaves this device.</p>`;
   bindNudges(app);
   app.querySelectorAll("[data-go]").forEach(r => r.onclick = () => location.hash = r.dataset.go);
-  heartbeat("folders");
 }
 
-/* ---------- notes list ---------- */
+/* ---------- lists ---------- */
 const FOLDER_META = {
-  mine: { title: "My Notepad", back: "Folders", compose: true },
-  circle: { title: "The Circle", back: "Folders", compose: true },
+  notes: { title: "Notepad", back: "Folders", compose: true },
+  shared: { title: "Shared with me", back: "Folders", compose: false },
   letters: { title: "Weekly Letters", back: "Folders", compose: false },
 };
 async function viewList(kind) {
-  renderTabs("notes");
-  const meta = FOLDER_META[kind] || FOLDER_META.mine;
+  renderTabs(kind === "shared" ? "shared" : "notes");
+  const meta = FOLDER_META[kind] || FOLDER_META.notes;
   let items = [];
   if (kind === "letters") {
     const { digests } = await api("/api/digests").catch(() => ({ digests: [] }));
     items = [{ kind: "today" }];
     items.push(...digests.map(d => ({ kind: "letter", id: d.weekKey, weekKey: d.weekKey })));
+  } else if (kind === "shared") {
+    const { shared } = await api("/api/shared").catch(() => ({ shared: [] }));
+    items = shared.map(s => ({ kind: "shared", id: s.id, note: s }));
   } else {
-    const scope = kind === "mine" ? "mine" : "circle";
-    const { notes } = await api("/api/notes?scope=" + scope).catch(() => ({ notes: [] }));
+    const { notes } = await api("/api/notes").catch(() => ({ notes: [] }));
     items = notes.map(n => ({ kind: "note", id: n.id, note: n }));
-    if (kind === "circle") {
-      const { here } = await api("/api/presence").catch(() => ({ here: [] }));
-      state.here = here;
-    }
   }
   const renderRows = (q) => {
     const query = q.trim().toLowerCase();
@@ -409,6 +345,7 @@ async function viewList(kind) {
     if (!list.length) {
       const empty = query ? "Nothing matches “" + esc(q.trim()) + "”."
         : kind === "letters" ? "No letters yet.<br>The first one arrives Monday."
+        : kind === "shared" ? "Nothing shared with you yet.<br>Shared notes arrive by email."
         : "Nothing here yet.";
       return `<div class="empty-state">${empty}</div>`;
     }
@@ -424,38 +361,54 @@ async function viewList(kind) {
           <div class="nr-title">${isThis ? "This week" : "Week of " + esc(weekRangeLabel(it.weekKey).split(" – ")[0])}</div>
           <div class="nr-sub">${esc(weekRangeLabel(it.weekKey))}</div></div>`;
       }
+      if (it.kind === "shared") {
+        const s = it.note;
+        return `<div class="nrow" data-shared="${s.id}">
+          <div class="nr-title">✉ ${esc(s.title)}</div>
+          <div class="nr-sub">${esc(s.from_name || s.from_email)} · ${relTime(s.received_at)}</div></div>`;
+      }
       const n = it.note;
       return `<div class="nrow" data-note="${n.id}">
-        <div class="nr-title">${n.link ? "🔗 " : ""}${esc(n.title)}</div>
+        <div class="nr-title">${n.shared ? "✉ " : ""}${esc(n.title)}</div>
         <div class="nr-sub">${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}</div></div>`;
     }).join("");
   };
   app.innerHTML = `
     <button class="back" data-go="#/folders">‹ ${meta.back}</button>
-    <h1 class="large-title">${esc(kind === "circle" ? state.circle.name : meta.title)}</h1>
-    <p class="list-count">${items.length} ${items.length === 1 ? (kind === "letters" ? "letter" : "note") : (kind === "letters" ? "letters" : "notes")}</p>
-    ${kind === "circle" ? presenceLine() : ""}
+    <h1 class="large-title">${esc(meta.title)}</h1>
+    <p class="list-count">${items.length} ${items.length === 1 ? (kind === "letters" ? "letter" : kind === "shared" ? "note" : "note") : (kind === "letters" ? "letters" : "notes")}</p>
     <div class="search"><span class="s-ic">⌕</span><input id="q" placeholder="Search" autocomplete="off"></div>
     <div class="ngroup" id="rows">${renderRows("")}</div>
-    ${meta.compose ? `<button class="fab" id="compose" aria-label="New note">✎</button>` : ""}`;
+    ${meta.compose ? `<button class="fab" id="compose" aria-label="New note">✎</button>` : ""}
+    ${kind === "shared" ? `<p class="foot-note">Checked every 10 minutes — <button class="go" id="scan-now">check now</button></p>` : ""}`;
   app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
   const q = $("#q");
   q.addEventListener("input", () => { $("#rows").innerHTML = renderRows(q.value); bindRows(); });
   const bindRows = () => {
     app.querySelectorAll("[data-note]").forEach(r => r.onclick = () => location.hash = "#/note/" + r.dataset.note);
+    app.querySelectorAll("[data-shared]").forEach(r => r.onclick = () => location.hash = "#/shared/" + r.dataset.shared);
     app.querySelectorAll("[data-letter]").forEach(r => r.onclick = () => location.hash = "#/letter/" + r.dataset.letter);
     app.querySelectorAll("[data-today]").forEach(r => r.onclick = () => location.hash = "#/letter/today");
   };
   bindRows();
   const fab = $("#compose");
-  if (fab) fab.onclick = () => location.hash = "#/compose/" + kind;
-  heartbeat("list:" + kind);
+  if (fab) fab.onclick = () => location.hash = "#/compose";
+  const scan = $("#scan-now");
+  if (scan) scan.onclick = async () => {
+    scan.disabled = true;
+    try {
+      const r = await api("/api/imap/scan", { method: "POST" });
+      toast(r.imported ? r.imported + " new shared note" + (r.imported === 1 ? "" : "s") + "." : "Nothing new.");
+      if (r.imported) viewList("shared");
+    } catch (e) { toast(e.message); }
+    scan.disabled = false;
+  };
 }
 
-/* ---------- topic folder: notes gathered round one tag ---------- */
+/* ---------- topic folder ---------- */
 async function viewTopic(tag) {
   renderTabs("notes");
-  const { notes } = await api("/api/notes?scope=mine").catch(() => ({ notes: [] }));
+  const { notes } = await api("/api/notes").catch(() => ({ notes: [] }));
   const folder = topicFolders(notes).find(f => f.tag === tag);
   const items = folder ? folder.notes : [];
   app.innerHTML = `
@@ -478,20 +431,16 @@ async function viewTopic(tag) {
   bind();
   q.addEventListener("input", () => { rows.innerHTML = renderRows(q.value); bind(); });
   app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
-  heartbeat("list:topic:" + tag);
 }
 
 /* ---------- compose ---------- */
-async function viewCompose(kind) {
+async function viewCompose() {
   renderTabs("notes");
-  const backHash = kind === "circle" ? "#/list/circle" : "#/list/mine";
-  const backLabel = kind === "circle" ? state.circle.name : "My Notepad";
-  const draftKey = "abba_draft_" + (activeCircleId() || "x") + "_" + kind;
+  const draftKey = "abba_draft";
   const draft = JSON.parse(localStorage.getItem(draftKey) || '{"title":"","body":"","tags":""}');
   app.innerHTML = `
-    <div class="editbar"><button class="back" id="bk">‹ ${esc(backLabel)}</button>
+    <div class="editbar"><button class="back" id="bk">‹ Notepad</button>
       <button class="done-btn" id="done">Done</button></div>
-    ${kind === "circle" ? `<p class="share-banner">Shared with ${esc(state.circle.name)} the moment you’re done.</p>` : ""}
     <input id="c-title" class="title-input" placeholder="Title" value="${esc(draft.title)}" maxlength="120">
     <textarea id="c-body" class="body-input" placeholder="Start writing…">${esc(draft.body)}</textarea>
     <input id="c-tags" class="tags-input" placeholder="tags, separated by commas" value="${esc(draft.tags)}">`;
@@ -508,10 +457,10 @@ async function viewCompose(kind) {
     }, 500);
   };
   [titleEl, bodyEl, tagsEl].forEach(el => el.addEventListener("input", () => { fit(); saveDraft(); }));
-  $("#bk").onclick = () => { location.hash = backHash; };
+  $("#bk").onclick = () => { location.hash = "#/list/notes"; };
   $("#done").onclick = async () => {
     const body = bodyEl.value.trim();
-    if (!body && !titleEl.value.trim()) { location.hash = backHash; return; }
+    if (!body && !titleEl.value.trim()) { location.hash = "#/list/notes"; return; }
     if (!body) { toast("Write something first — even a fragment."); return; }
     try {
       const { note } = await api("/api/notes", {
@@ -519,22 +468,17 @@ async function viewCompose(kind) {
         body: JSON.stringify({
           title: titleEl.value, body,
           tags: tagsEl.value.split(",").map(x => x.trim()).filter(Boolean),
-          shared: kind === "circle",
         }),
       });
       localStorage.removeItem(draftKey);
-      toast(kind === "circle" ? "Shared with the circle." : "Kept in your notepad.");
+      toast("Kept in your notepad.");
       location.hash = "#/note/" + note.id;
     } catch (e) { toast(e.message); }
   };
   titleEl.focus();
-  heartbeat("compose");
 }
 
 /* ---------- note detail ---------- */
-/* Floating response orb (after callmenick's CSS-Circle-Menu): your presence pill,
-   fixed above the tab bar. Tapping fans statuses, actions and reactions out
-   over the interface with staggered spring timing. */
 const ZEN_STROKE = 'fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"';
 const ZEN = {
   seed: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M13 4.5c3.2 4.3 4.2 9 0 13.5-4.2-4.5-3.2-9.2 0-13.5z"/></svg>',
@@ -542,50 +486,33 @@ const ZEN = {
   motion: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M4 9.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/><path d="M4 14.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/><path d="M4 19.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/></svg>',
   decided: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M21.3 13a8.3 8.3 0 1 1-2.5-5.9"/></svg>',
   resting: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M19.8 14.8A7.8 7.8 0 1 1 11.2 5.4a6.2 6.2 0 0 0 8.6 9.4z"/></svg>',
-  share: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><circle cx="13" cy="13" r="1.8" fill="currentColor" stroke="none"/><circle cx="13" cy="13" r="6.2"/><circle cx="13" cy="13" r="10.5"/></svg>',
+  share: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M12 3v10m0-10L7.5 7.5M12 3l4.5 4.5"/><path d="M4.5 12v7a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/></svg>',
   edit: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M5 19.5l1.2-4.2L16.7 4.8a2 2 0 0 1 2.8 2.8L9 18.1z"/><path d="M14.8 6.7l2.8 2.8"/></svg>',
   export: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M13 4.5V15"/><path d="M8.8 11.2L13 15.4l4.2-4.2"/><path d="M5.5 19.5h15"/></svg>',
   del: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M5 7h16"/><path d="M9.5 7V5h7v2"/><path d="M7 7l1 13.5h8L17 7"/><path d="M10.8 10.5v7M15.2 10.5v7"/></svg>',
 };
 function orbHtml(note) {
   const items = [];
-  if (note.mine) {
-    STATUS_FLOW.forEach(s => items.push({ kind: "status", key: s, label: STATUS_LABEL[s], active: note.status === s }));
-    items.push({ kind: "status", key: "resting", label: note.status === "resting" ? "Wake up" : "Rest", active: note.status === "resting" });
-    items.push({ kind: "share", key: "share", label: note.shared ? "Unshare" : "Share", active: false });
-  }
-  Object.keys(REACT_META).forEach(k => {
-    items.push({
-      kind: "react", key: k, emoji: REACT_META[k][0], label: REACT_META[k][1],
-      count: note.reactionCounts[k] || 0, active: note.myReactions.indexOf(k) >= 0,
-    });
-  });
-  if (note.mine) {
-    items.push({ kind: "act", key: "edit", label: "Edit" });
-    items.push({ kind: "act", key: "export", label: "Export" });
-    items.push({ kind: "act", key: "del", label: "Delete" });
-  } else {
-    items.push({ kind: "act", key: "export", label: "Export" });
-  }
+  STATUS_FLOW.forEach(s => items.push({ kind: "status", key: s, label: STATUS_LABEL[s], active: note.status === s }));
+  items.push({ kind: "status", key: "resting", label: note.status === "resting" ? "Wake up" : "Rest", active: note.status === "resting" });
+  items.push({ kind: "share", key: "share", label: "Share by email", active: false });
+  items.push({ kind: "act", key: "edit", label: "Edit" });
+  items.push({ kind: "act", key: "export", label: "Export" });
+  items.push({ kind: "act", key: "del", label: "Delete" });
   const n = items.length, step = n > 1 ? 180 / (n - 1) : 0;
-  const dense = n > 9, radius = dense ? 168 : 145;
   const sats = items.map((it, i) => {
     const a = 180 + i * step;
-    const inner = it.kind === "react"
-      ? '<span class="c-emoji">' + it.emoji + "</span>" + (it.count ? '<span class="c-badge">' + it.count + "</span>" : "")
-      : (ZEN[it.key] || '<span class="c-label">' + esc(it.label) + "</span>");
+    const inner = (ZEN[it.key] || '<span class="c-label">' + esc(it.label) + "</span>");
     return '<button class="c-item' + (it.active ? " on" : "") + (it.key === "del" ? " danger" : "") + '" data-ck="' + it.kind + '" data-ckey="' + it.key + '"' +
       ' style="--a:' + a.toFixed(1) + 'deg;--i:' + i + '" aria-label="' + esc(it.label || it.key) + '">' + inner + "</button>";
   }).join("");
-  const me = state.me || {};
-  const color = esc(me.color || "#A08C5B");
   const hint = localStorage.getItem("abba_orb_seen")
     ? ""
-    : '<div class="orb-hint" id="orbhint">Tap for reactions &amp; more</div>';
-  const enso = '<svg class="enso" viewBox="0 0 60 60" aria-hidden="true"><path d="M30 7 C43 7 53 17 53 30 C53 43 43 52 30 53 C17 54 7 44 7 31 C7 19 16 8 28 7" fill="none" stroke="' + color + '" stroke-width="3.4" stroke-linecap="round"/></svg>';
+    : '<div class="orb-hint" id="orbhint">Tap for more</div>';
+  const enso = '<svg class="enso" viewBox="0 0 60 60" aria-hidden="true"><path d="M30 7 C43 7 53 17 53 30 C53 43 43 52 30 53 C17 54 7 44 7 31 C7 19 16 8 28 7" fill="none" stroke="#A08C5B" stroke-width="3.4" stroke-linecap="round"/></svg>';
   const tchev = '<svg class="tchev" viewBox="0 0 12 8" aria-hidden="true"><path d="M1.5 1.5 L6 6 L10.5 1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  return '<div class="orb-wrap' + (dense ? " dense" : "") + '" id="cstage" style="--r:' + radius + 'px">' + sats +
-    '<button class="orb-toggle" id="ctoggle" aria-label="React and more">' + enso + tchev + "</button>" +
+  return '<div class="orb-wrap" id="cstage" style="--r:145px">' + sats +
+    '<button class="orb-toggle" id="ctoggle" aria-label="More actions">' + enso + tchev + "</button>" +
     hint + "</div>";
 }
 function relatedHtml(related) {
@@ -599,19 +526,18 @@ let convoState = { id: null, open: false };
 function convoOpen() { return convoState.open; }
 function commentsHtml(note, open) {
   const n = note.comments.length;
-  if (!n && !note.shared) return "";
-  const label = n ? n + (n === 1 ? " thought" : " thoughts") : "Start the conversation";
+  if (!n) return "";
   let body = "";
   if (open) {
     const list = note.comments.map(function (c) {
-      return '<div class="comment"><div class="who"><span class="dot" style="background:' + esc(c.author.color) +
-        '"></span><b>' + esc(c.author.name) + "</b><span>" + relTime(c.createdAt) + "</span></div><p>" + esc(c.body) + "</p></div>";
+      return '<div class="comment"><div class="who"><b>' + (esc(c.author) || "Note to self") + "</b><span>" + relTime(c.createdAt) + '</span><button class="go" data-cdel="' + c.id + '">delete</button></div><p>' + esc(c.body) + "</p></div>";
     }).join("");
     body = '<div class="card" style="margin-top:6px"><div id="comments">' + list + "</div>" +
-      '<div class="comment-box"><input id="cbox" placeholder="Add a thought…" maxlength="5000">' +
+      '<div class="comment-box"><input id="cbox" placeholder="Add a margin note…" maxlength="5000">' +
       '<button class="btn btn-primary" id="csend">↩</button></div></div>';
   }
-  return '<button class="convo-toggle" id="convo-toggle"><span>💬</span><span>' + esc(label) +
+  return '<button class="convo-toggle" id="convo-toggle"><span>💬</span><span>' +
+    esc(n + (n === 1 ? " margin note" : " margin notes")) +
     '</span><span class="chev">' + (open ? "▾" : "▸") + "</span></button>" + body;
 }
 function bindConvo(note, id) {
@@ -633,11 +559,18 @@ function bindConvo(note, id) {
   };
   const box = $("#cbox");
   if (box) box.addEventListener("keydown", e => { if (e.key === "Enter") $("#csend").click(); });
+  app.querySelectorAll("[data-cdel]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm("Delete this margin note?")) return;
+    try {
+      await api("/api/notes/" + id + "/comments/" + b.dataset.cdel, { method: "DELETE" });
+      viewDetail(id, false);
+    } catch (err) { toast(err.message); }
+  });
 }
 async function downloadNote(id) {
   try {
-    const tok = activeToken();
-    const res = await fetch("/api/notes/" + id + "/export", { headers: { Authorization: "Bearer " + tok } });
+    const res = await fetch("/api/notes/" + id + "/export");
     if (!res.ok) throw new Error("Export failed");
     const blob = await res.blob();
     const a = document.createElement("a");
@@ -646,6 +579,39 @@ async function downloadNote(id) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch (e) { toast(e.message); }
+}
+/* Share sheet: email addresses, comma-separated. The email is the invite. */
+function shareSheetHtml() {
+  return `<div class="sheet-back" id="sheet-back"><div class="sheet" role="dialog" aria-label="Share by email">
+    <h3>Share by email</h3>
+    <p class="sub">They get the note as an email. If they use Abba, it lands in their <em>Shared with me</em> shelf — that's the whole invite.</p>
+    <input id="share-emails" placeholder="name@example.com, …" autocomplete="off" style="width:100%">
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-ghost" id="share-cancel">Cancel</button>
+      <button class="btn btn-primary" id="share-send">Send</button>
+    </div></div></div>`;
+}
+function openShareSheet(noteId) {
+  const wrap = document.createElement("div");
+  wrap.innerHTML = shareSheetHtml();
+  document.body.appendChild(wrap);
+  const close = () => wrap.remove();
+  $("#share-cancel", wrap).onclick = close;
+  $("#sheet-back", wrap).addEventListener("click", (e) => { if (e.target.id === "sheet-back") close(); });
+  const input = $("#share-emails", wrap);
+  input.focus();
+  $("#share-send", wrap).onclick = async () => {
+    const emails = input.value.split(/[,\s;]+/).map(s => s.trim()).filter(Boolean);
+    if (!emails.length) { toast("Add at least one email address."); return; }
+    const btn = $("#share-send", wrap);
+    btn.disabled = true;
+    try {
+      const r = await api("/api/notes/" + noteId + "/share", { method: "POST", body: JSON.stringify({ emails }) });
+      close();
+      toast(r.sent === 1 ? "Shared." : "Shared with " + r.sent + " people.");
+      viewDetail(noteId, false);
+    } catch (e) { toast(e.message); btn.disabled = false; }
+  };
 }
 function editorHtml(note) {
   return '<div class="editbar"><button class="back" id="e-cancel">‹ Cancel</button>' +
@@ -664,21 +630,14 @@ function detailBodyHtml(note, related) {
   const tags = note.tags.length
     ? '<div class="tags">' + note.tags.map(function (t) { return '<span class="tag">' + esc(t) + "</span>"; }).join("") + "</div>"
     : "";
-  const backHash = note.shared ? "#/list/circle" : "#/list/mine";
-  const backLabel = note.shared ? state.circle.name : "My Notepad";
-  const linkBadge = note.link
-    ? '<p class="link-badge">🔗 Linked from ' + esc(note.link.name || "someone") + (note.link.circle ? " · " + esc(note.link.circle) : "") + " — frozen, read-only</p>"
-    : "";
-  return '<button class="back" data-go="' + backHash + '">‹ ' + esc(backLabel) + "</button>" +
+  return '<button class="back" data-go="#/list/notes">‹ Notepad</button>' +
     '<h1 class="note-title">' + esc(note.title) + "</h1>" +
-    '<p class="note-meta"><span class="dot" style="background:' + esc(note.author.color) + '"></span>' +
-    esc(note.author.name) + " · " + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min</p>" +
-    linkBadge +
+    '<p class="note-meta">' + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min" +
+    (note.shared ? ' · <span title="Shared by email">✉ shared</span>' : "") + "</p>" +
     tags + '<div class="reader">' + md(note.body) + "</div>" +
-    (note.link ? "" : orbHtml(note)) + relatedHtml(related) +
+    orbHtml(note) + relatedHtml(related) +
     '<div id="convo-wrap">' + commentsHtml(note, convoOpen()) + "</div>";
 }
-
 async function viewDetail(id, editing) {
   renderTabs("notes");
   let note;
@@ -722,12 +681,10 @@ async function viewDetail(id, editing) {
     return;
   }
   const stage = $("#cstage"), ctoggle = $("#ctoggle");
-  // task checkboxes: tap to flip the underlying "- [ ]" line (own notes only)
   const bindTasks = () => {
     app.querySelectorAll(".reader .cbox").forEach(b => {
       b.onclick = async (e) => {
         e.preventDefault();
-        if (!note.mine || note.link) return;
         const body = toggleTask(note.body, Number(b.dataset.task));
         if (body === note.body) return;
         b.disabled = true;
@@ -744,15 +701,14 @@ async function viewDetail(id, editing) {
   if (stage && ctoggle) {
     ctoggle.onclick = () => {
       const open = stage.classList.toggle("open");
-      ctoggle.setAttribute("aria-label", open ? "Close" : "React and more");
+      ctoggle.setAttribute("aria-label", open ? "Close" : "More actions");
       const hint = $("#orbhint");
       if (hint) hint.remove();
       try { localStorage.setItem("abba_orb_seen", "1"); } catch (e) { /* private mode */ }
     };
-    /* first-visit auto-peek: bloom the fan once so the gesture is learned, then settle */
     try {
       const seen = localStorage.getItem("abba_orb_seen");
-      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const reduce = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
       if (!seen && !reduce) {
         localStorage.setItem("abba_orb_seen", "1");
         setTimeout(() => {
@@ -763,7 +719,7 @@ async function viewDetail(id, editing) {
         setTimeout(() => {
           if (!document.body.contains(stage)) return;
           stage.classList.remove("open");
-          ctoggle.setAttribute("aria-label", "React and more");
+          ctoggle.setAttribute("aria-label", "More actions");
           const hint = $("#orbhint");
           if (hint) hint.remove();
         }, 2100);
@@ -776,10 +732,8 @@ async function viewDetail(id, editing) {
           await api("/api/notes/" + id, { method: "PATCH", body: JSON.stringify({ status: key }) });
           toast(key === "decided" ? "Marked decided. Nice." : "Updated.");
         } else if (kind === "share") {
-          await api("/api/notes/" + id + (note.shared ? "/unshare" : "/share"), { method: "POST" });
-          toast(note.shared ? "Back in your notepad." : "Shared with the circle.");
-        } else if (kind === "react") {
-          await api("/api/notes/" + id + "/react", { method: "POST", body: JSON.stringify({ kind: key }) });
+          openShareSheet(id);
+          return;
         } else if (kind === "act") {
           if (key === "edit") { viewDetail(id, true); return; }
           if (key === "export") { downloadNote(id); return; }
@@ -787,7 +741,7 @@ async function viewDetail(id, editing) {
             if (!confirm("Delete this note for good?")) return;
             await api("/api/notes/" + id, { method: "DELETE" });
             toast("Deleted.");
-            location.hash = note.shared ? "#/list/circle" : "#/list/mine";
+            location.hash = "#/list/notes";
             return;
           }
         }
@@ -797,7 +751,37 @@ async function viewDetail(id, editing) {
   }
   bindConvo(note, id);
   renderMermaid();
-  heartbeat("note:" + id);
+}
+
+/* ---------- shared note (incoming) ---------- */
+async function viewSharedNote(id) {
+  renderTabs("shared");
+  let s;
+  try { s = (await api("/api/shared/" + id)).note; }
+  catch (e) {
+    app.innerHTML = '<button class="back" data-go="#/list/shared">‹ Shared with me</button><div class="empty-state">That note isn\'t here anymore.</div>';
+    app.querySelector("[data-go]").onclick = (ev) => location.hash = ev.target.closest("[data-go]").dataset.go;
+    return;
+  }
+  app.innerHTML = `
+    <button class="back" data-go="#/list/shared">‹ Shared with me</button>
+    <h1 class="note-title">${esc(s.title)}</h1>
+    <p class="note-meta">from ${esc(s.from_name ? s.from_name + " <" + s.from_email + ">" : s.from_email)} · ${relTime(s.received_at)}</p>
+    <div class="reader">${md(s.body)}</div>
+    <div class="btn-row" style="margin-top:18px">
+      <button class="btn btn-ghost" id="sh-remove">Remove from shelf</button>
+    </div>
+    <p class="foot-note">Shared notes are read-only snapshots — the original lives with its author.</p>`;
+  app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
+  $("#sh-remove").onclick = async () => {
+    if (!confirm("Remove this shared note from your shelf?")) return;
+    try {
+      await api("/api/shared/" + id, { method: "DELETE" });
+      toast("Removed.");
+      location.hash = "#/list/shared";
+    } catch (e) { toast(e.message); }
+  };
+  renderMermaid();
 }
 
 /* ---------- weekly letter ---------- */
@@ -826,404 +810,20 @@ async function viewLetter(weekKeyParam) {
         ${isToday ? "" : `<p class="intro" style="margin-top:22px">Carry one of these into next week — that's plenty.</p>`}`}
     </div>`;
   app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
-  heartbeat("letter");
 }
 
-/* ---------- members ---------- */
-function inviteExpiryHtml(iso) {
-  if (!iso) return "";
-  const ms = Date.parse(iso) - Date.now();
-  if (ms <= 0) return `<p class="sub" style="color:var(--danger)">This code has expired — issue a new one to keep inviting.</p>`;
-  const days = Math.ceil(ms / 86400000);
-  const d = new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  return `<p class="sub">Works on any peered Abba · expires ${d} (${days} day${days === 1 ? "" : "s"} left).</p>`;
-}
-async function viewMembers() {
-  renderTabs("circle");
-  const [{ members }, { here }] = await Promise.all([
-    api("/api/members"), api("/api/presence").catch(() => ({ here: [] })),
-  ]);
-  const hereIds = new Set(here.map(h => h.id));
-  const isOwner = state.me.role === "owner";
-  const localCount = members.filter(m => m.role !== "remote" && m.role !== "migrated").length;
-  const circles = myCircles();
-  const currentId = String(activeCircleId());
-  app.innerHTML = `
-    <h1 class="large-title">${esc(state.circle.name)}</h1>
-    ${presenceLine()}
-    ${circles.length > 1 ? `
-    <p class="section-label">Your circles</p>
-    <div class="group">
-      ${circles.map(c => `
-        <div class="mrow" data-circle="${esc(c.id)}" style="${String(c.id) === currentId ? "" : "cursor:pointer"}">
-          <span class="dot" style="background:${String(c.id) === currentId ? "var(--terra)" : "var(--faint)"};width:16px;height:16px"></span>
-          <div class="mrow-main"><div class="mrow-name">${esc(c.name)}${String(c.id) === currentId ? " (here)" : ""}</div>
-          <div class="mrow-sub">${String(c.id) === currentId ? "this circle" : "tap to switch"}</div></div>
-        </div>`).join("")}
-    </div>` : ""}
-    <p class="section-label">Members · ${localCount} of ${state.circle.memberCap}</p>
-    <div class="group">
-      ${members.map(m => {
-        const isHere = hereIds.has(m.id) || m.id === state.me.id;
-        const sub = isHere ? "here now" : m.role === "owner" ? "started the circle"
-          : m.role === "remote" ? "synced from another Abba"
-          : m.role === "migrated" ? "from the old circle" : "member";
-        return `<div class="mrow"><span class="dot" style="background:${esc(m.color)};width:16px;height:16px"></span>
-          <div class="mrow-main"><div class="mrow-name">${esc(m.name)}${m.id === state.me.id ? " (you) " : ""}</div>
-          <div class="mrow-sub${isHere ? " here" : ""}">${sub}</div></div></div>`;
-      }).join("")}
-    </div>
-    <p class="section-label">Invite</p>
-    <div class="card invite-card">
-      <div class="code">${esc(state.circle.inviteCode)}</div>
-      <p>Share this code — it opens the door on this Abba and any it's peered with. The circle stays small on purpose.</p>
-      ${inviteExpiryHtml(state.circle.inviteExpiresAt)}
-      <div class="btn-row">
-        <button class="btn btn-ghost" id="copy">Copy invite link</button>
-        ${isOwner ? `<button class="btn btn-quiet" id="regen" style="color:#C9BBA6">New code</button>` : ""}
-      </div>
-    </div>
-    <p class="section-label">Mesh sync</p>
-    <div class="card" id="mesh-card"><p class="sub" id="mesh-loading">Checking the mesh…</p></div>
-    ${isOwner ? `
-    <p class="section-label">Invite specific people</p>
-    <div class="card">
-      <p class="sub" style="margin:0 0 10px">Add someone by their user ID — they join with it instead of the shared code. One use each, good for 7 days.</p>
-      <div class="btn-row">
-        <input id="tinv-uid" placeholder="usr-…" style="flex:1;min-width:0" autocomplete="off">
-        <input id="tinv-name" placeholder="Their name" style="flex:1;min-width:0" maxlength="40">
-        <button class="btn btn-primary" id="tinv-add">Add</button>
-      </div>
-      <div id="tinv-list" style="margin-top:10px"><p class="sub">Loading…</p></div>
-    </div>` : ""}
-    <p class="section-label">Notes on IMAP</p>
-    <div class="card" id="imap-card"><p class="sub" id="imap-loading">Checking…</p></div>
-    <p class="section-label">Account</p>
-    <div class="card">
-      <p class="sub" style="margin:0 0 10px">${state.me.hasPassword
-        ? "A secret is set — your name + secret re-opens this account, here or through the mesh."
-        : "No secret yet. Set one and your name + secret will always re-open this account."}</p>
-      <div class="btn-row">
-        <input id="acc-pass" type="password" placeholder="new secret (4+ characters)" style="flex:1;min-width:0" autocomplete="new-password">
-        <button class="btn btn-primary" id="acc-set">Set secret</button>
-      </div>
-      <div class="btn-row" id="install-row" style="display:none;margin-top:10px">
-        <button class="btn btn-ghost" id="acc-install">Install Abba on this device</button>
-      </div>
-      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
-      <p class="sub" style="margin:0 0 6px">Your user ID — share it with a circle owner to be added directly, no invite code needed.</p>
-      <div class="btn-row">
-        <div class="code" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(state.me.userId || "…")}</div>
-        <button class="btn btn-ghost" id="uid-copy">Copy</button>
-      </div>
-    </div>
-    <p class="section-label">Circles</p>
-    <div class="card">
-      <p class="sub" style="margin:0 0 10px">One Abba can hold several circles — family, work, friends. Each is separate: its own members, notes, and invite code. You become the new circle's owner.</p>
-      <div class="btn-row">
-        <input id="newc-name" placeholder="New circle's name" style="flex:1;min-width:0" maxlength="60">
-        <button class="btn btn-primary" id="newc-go">Start circle</button>
-      </div>
-      ${!isOwner ? `
-      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
-      <p class="sub" style="margin:0 0 10px">Leaving removes you from this circle on this device. Your notes stay with the circle; rejoin anytime with the invite code.</p>
-      <div class="btn-row"><button class="btn btn-ghost" id="circ-leave">Leave this circle</button></div>` : ""}
-    </div>
-    ${isOwner ? `
-    <p class="section-label danger">Danger zone</p>
-    <div class="card">
-      <p class="sub" style="margin:0 0 10px">Migrate moves this circle's content — your notes and shared notes — into a fresh, empty circle with a new invite code. Everyone but you starts over.</p>
-      <div class="btn-row"><button class="btn btn-ghost" id="circ-migrate">Migrate to new circle</button></div>
-      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
-      <p class="sub" style="margin:0 0 10px">Burning destroys the circle on this Abba — members, notes, everything. Peered instances are told to drop shared notes. This can't be undone.</p>
-      <div class="btn-row"><button class="btn btn-ghost btn-danger" id="circ-burn">Burn circle</button></div>
-      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
-      <p class="sub" style="margin:0 0 10px">Reset wipes everything — circle, notes, members, and this Abba's identity — and starts over as a fresh install. Peered copies keep what they already synced.</p>
-      <div class="btn-row"><button class="btn btn-ghost btn-danger" id="circ-reset">Reset Abba</button></div>
-    </div>` : `
-    <p class="section-label">Your own circle</p>
-    <div class="card">
-      <p class="sub" style="margin:0 0 10px">Take your notes, your comments, and frozen links to notes shared with you — and become host of your own circle on a fresh Abba. Nothing new flows back from here afterwards.</p>
-      <div class="btn-row"><button class="btn btn-ghost" id="circ-export">Migrate to your own circle</button></div>
-    </div>`}`;
-  $("#copy").onclick = async () => {
-    const link = location.origin + location.pathname + "#/welcome?code=" + state.circle.inviteCode;
-    try { await navigator.clipboard.writeText(link); toast("Invite link copied."); }
-    catch { prompt("Copy this link:", link); }
-  };
-  // switch circles
-  app.querySelectorAll("[data-circle]").forEach(row => {
-    if (row.dataset.circle === String(activeCircleId())) return;
-    row.onclick = async () => {
-      setActiveCircle(row.dataset.circle);
-      location.hash = "#/folders";
-      await boot(true);
-    };
-  });
-  const newcGo = $("#newc-go");
-  if (newcGo) newcGo.onclick = async () => {
-    const nm = ($("#newc-name") || {}).value.trim();
-    if (!nm) { toast("Name the circle."); return; }
-    try {
-      const d = await api("/api/circles", { method: "POST", body: JSON.stringify({ name: nm }) });
-      rememberCircle(d.circle.id, d.token, d.circle.name);
-      toast("Circle started — you're its owner.");
-      location.hash = "#/folders";
-      await boot(true);
-    } catch (e) { toast(e.message); }
-  };
-  const leave = $("#circ-leave");
-  if (leave) leave.onclick = async () => {
-    if (!confirm("Leave \"" + state.circle.name + "\"? You can rejoin with the invite code.")) return;
-    try {
-      await api("/api/circle/leave", { method: "POST" });
-      forgetCircle(activeCircleId());
-      toast("Left the circle.");
-      location.hash = activeCircleId() ? "#/folders" : "#/welcome";
-      await boot(true);
-    } catch (e) { toast(e.message); }
-  };
-  const regen = $("#regen");
-  if (regen) regen.onclick = async () => {
-    try { const d = await api("/api/invite/regenerate", { method: "POST" }); state.circle.inviteCode = d.inviteCode; state.circle.inviteExpiresAt = d.inviteExpiresAt; viewMembers(); toast("New code issued."); }
-    catch (e) { toast(e.message); }
-  };
-  renderMeshCard(isOwner);
-  renderImapCard();
-  const accSet = $("#acc-set");
-  if (accSet) accSet.onclick = async () => {
-    const pw = ($("#acc-pass") || {}).value || "";
-    try {
-      await api("/api/account/password", { method: "POST", body: JSON.stringify({ password: pw }) });
-      toast("Secret set.");
-      state.me.hasPassword = true;
-      viewMembers();
-    } catch (e) { toast(e.message); }
-  };
-  // PWA install: the row appears only when the browser offers installation
-  const showInstall = () => {
-    const row = $("#install-row");
-    if (row && window.__deferredInstall) row.style.display = "";
-  };
-  window.addEventListener("abba:installable", showInstall);
-  showInstall();
-  const instBtn = $("#acc-install");
-  if (instBtn) instBtn.onclick = async () => {
-    const p = window.__deferredInstall;
-    if (!p) return;
-    window.__deferredInstall = null;
-    const row = $("#install-row");
-    if (row) row.style.display = "none";
-    p.prompt();
-    try { await p.userChoice; } catch {}
-  };
-  const uidCopy = $("#uid-copy");
-  if (uidCopy) uidCopy.onclick = async () => {
-    try { await navigator.clipboard.writeText(state.me.userId || ""); toast("User ID copied."); }
-    catch { prompt("Copy your user ID:", state.me.userId || ""); }
-  };
-  // targeted invites (owner): add specific users by their user ID
-  const tinvList = $("#tinv-list");
-  const renderInvites = async () => {
-    if (!tinvList) return;
-    try {
-      const d = await api("/api/circle/invites");
-      tinvList.innerHTML = d.invites.length ? d.invites.map(iv => {
-        const left = Math.max(0, Date.parse(iv.expires_at) - Date.now());
-        const days = Math.ceil(left / 86400000);
-        return `<div class="mrow"><div class="mrow-main"><div class="mrow-name">${esc(iv.name || "Someone")}</div>
-          <div class="mrow-sub" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(iv.user_id)} · ${days} day${days === 1 ? "" : "s"} left</div></div>
-          <button class="btn btn-quiet" data-uninvite="${esc(iv.user_id)}">Revoke</button></div>`;
-      }).join("") : `<p class="sub">No pending invites.</p>`;
-      tinvList.querySelectorAll("[data-uninvite]").forEach(b => b.onclick = async () => {
-        await api("/api/circle/invites/" + encodeURIComponent(b.dataset.uninvite), { method: "DELETE" });
-        toast("Invite revoked."); renderInvites();
-      });
-    } catch (e) { tinvList.innerHTML = `<p class="sub">Couldn't load invites.</p>`; }
-  };
-  renderInvites();
-  const tinvAdd = $("#tinv-add");
-  if (tinvAdd) tinvAdd.onclick = async () => {
-    const userId = ($("#tinv-uid") || {}).value || "";
-    const name = (($("#tinv-name") || {}).value || "").trim();
-    try {
-      await api("/api/circle/invites", { method: "POST", body: JSON.stringify({ userId: userId.trim(), name }) });
-      $("#tinv-uid").value = ""; $("#tinv-name").value = "";
-      toast(name ? `${name} can now join with their user ID.` : "User added — they can join with their user ID.");
-      renderInvites();
-    } catch (e) { toast(e.message); }
-  };
-  const mig = $("#circ-migrate");
-  if (mig) mig.onclick = async () => {
-    if (!confirm("Migrate this circle's content into a fresh, empty circle? Everyone but you will need to re-join with the new invite code.")) return;
-    try {
-      const d = await api("/api/circle/migrate", { method: "POST" });
-      state.circle.inviteCode = d.inviteCode;
-      state.circle.inviteExpiresAt = d.inviteExpiresAt;
-      toast(`New circle ready — ${d.migratedNotes} notes migrated.`);
-      viewMembers();
-    } catch (e) { toast(e.message); }
-  };
-  const brn = $("#circ-burn");
-  if (brn) brn.onclick = async () => {
-    const c = prompt("Type BURN to destroy this circle and everything in it. This can't be undone.");
-    if (c === null) return;
-    try {
-      await api("/api/circle/burn", { method: "POST", body: JSON.stringify({ confirm: c }) });
-      forgetCircle(activeCircleId());
-      location.hash = activeCircleId() ? "#/folders" : "#/welcome";
-      await boot(true);
-    } catch (e) { toast(e.message); }
-  };
-  const exp = $("#circ-export");
-  if (exp) exp.onclick = async () => {
-    if (!confirm("Download your migration bundle? It holds your notes, your comments, and frozen links to notes shared with you.")) return;
-    try {
-      const d = await api("/api/circle/migrate", { method: "POST" });
-      const blob = new Blob([JSON.stringify(d.export)], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "abba-migrate-" + (state.me.name || "me").toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".json";
-      document.body.appendChild(a); a.click(); a.remove();
-      toast("Bundle downloaded — import it on a fresh Abba's welcome screen.");
-    } catch (e) { toast(e.message); }
-  };
-  const rst = $("#circ-reset");
-  if (rst) rst.onclick = async () => {
-    if (!confirm("Reset Abba to a fresh install? Everything on this Abba — circle, notes, members, identity — is wiped. This can't be undone.")) return;
-    try {
-      await api("/api/circle/reset", { method: "POST" });
-      try { localStorage.removeItem("abba_circles"); localStorage.removeItem("abba_active_circle"); } catch (e) {}
-      location.hash = "#/welcome";
-      await boot(true);
-    } catch (e) { toast(e.message); }
-  };
-  heartbeat("members");
-}
-
-async function renderMeshCard(isOwner) {
-  const card = $("#mesh-card");
-  if (!card) return;
-  let st;
-  try { st = await api("/api/mesh/status"); }
-  catch (e) { card.innerHTML = `<p class="sub">Mesh isn't reachable: ${esc(e.message)}</p>`; return; }
-  const shortId = st.nodeId.slice(0, 8) + "…" + st.nodeId.slice(-4);
-  const pairings = st.pairings || [];
-  const pairingFor = (peerId) => pairings.filter(p => p.peer_node_id === peerId);
-  card.innerHTML = `
-    <div class="mesh-head"><span class="mono">${esc(shortId)}</span>
-      <span class="sub" style="margin:0">${esc(st.url)}</span></div>
-    ${st.peers.length ? `<div class="mesh-peers">${st.peers.map(p => {
-      const prs = pairingFor(p.id);
-      const pairTxt = prs.length
-        ? prs.map(pr => esc(pr.circle_name || "a circle") + (pr.remote_mesh_id ? "" : " (linking…)")).join(", ")
-        : "not paired — sync paused";
-      return `
-      <div class="mrow"><span class="dot" style="background:${p.lastOk ? "var(--sage)" : "var(--faint)"};width:12px;height:12px"></span>
-        <div class="mrow-main"><div class="mrow-name mono">${esc(p.id.slice(0, 8))}…</div>
-        <div class="mrow-sub">${esc(p.url)}${p.via ? " · via mesh" : ""}<br>syncs: ${pairTxt}</div></div>
-        ${isOwner ? `<button class="btn btn-quiet mesh-rm" data-id="${esc(p.id)}" style="color:#C9BBA6">Remove</button>` : ""}
-      </div>
-      ${isOwner && !prs.length ? `<div class="btn-row" data-pairwrap="${esc(p.id)}" style="margin:6px 0 10px">
-        <select data-remote-circles style="flex:1;min-width:0"><option>Loading circles…</option></select>
-        <button class="btn btn-ghost" data-pair="${esc(p.id)}">Pair with this circle</button>
-      </div>` : ""}`;
-    }).join("")}</div>`
-      : `<p class="sub">No peered instances. Shared notes stay on this Abba until you peer one.</p>`}
-    ${isOwner ? `
-    <div class="btn-row" style="margin-top:12px">
-      <button class="btn btn-ghost" id="mesh-invite">Create instance invite</button>
-      <button class="btn btn-ghost" id="mesh-sync">Sync now</button>
-    </div>
-    <div id="mesh-code-wrap" style="display:none;margin-top:10px">
-      <input class="mono" id="mesh-code" readonly style="width:100%;font-size:11px">
-      <div class="btn-row" style="margin-top:8px"><button class="btn btn-ghost" id="mesh-copy">Copy code</button></div>
-      <p class="sub" style="margin-top:8px">Paste this on the <em>other</em> Abba's Circle → Mesh sync → Join. Only shared notes replicate; private notepad notes never leave this instance.</p>
-    </div>
-    <div class="btn-row" style="margin-top:10px">
-      <input id="mesh-join-code" class="mono" placeholder="paste instance invite…" style="flex:1;min-width:0;font-size:11px">
-      <button class="btn btn-primary" id="mesh-join">Join</button>
-    </div>
-    <div class="btn-row" style="margin-top:10px">
-      <input id="mesh-knock-url" class="mono" placeholder="https://… — peer by URL, no invite needed" style="flex:1;min-width:0;font-size:11px">
-      <button class="btn btn-primary" id="mesh-knock">Peer</button>
-    </div>` : `<p class="sub">Only the circle's owner can peer instances.</p>`}`;
-  const inv = $("#mesh-invite");
-  if (inv) inv.onclick = async () => {
-    try {
-      const d = await api("/api/mesh/invite", { method: "POST" });
-      $("#mesh-code-wrap").style.display = "block";
-      $("#mesh-code").value = d.code;
-    } catch (e) { toast(e.message); }
-  };
-  const cp = $("#mesh-copy");
-  if (cp) cp.onclick = async () => {
-    const el = $("#mesh-code");
-    try { await navigator.clipboard.writeText(el.value); toast("Copied."); }
-    catch { el.select(); toast("Copy it manually."); }
-  };
-  const jn = $("#mesh-join");
-  if (jn) jn.onclick = async () => {
-    const code = $("#mesh-join-code").value.trim();
-    if (!code) return;
-    try { await api("/api/mesh/join", { method: "POST", body: JSON.stringify({ code }) }); toast("Instance peered. Syncing…"); renderMeshCard(isOwner); }
-    catch (e) { toast(e.message); }
-  };
-  const kn = $("#mesh-knock");
-  if (kn) kn.onclick = async () => {
-    const url = $("#mesh-knock-url").value.trim();
-    if (!url) return;
-    try { await api("/api/mesh/knock", { method: "POST", body: JSON.stringify({ url }) }); toast("Instance peered. Syncing…"); renderMeshCard(isOwner); }
-    catch (e) { toast(e.message); }
-  };
-  const sy = $("#mesh-sync");
-  if (sy) sy.onclick = async () => {
-    try { await api("/api/mesh/sync", { method: "POST" }); toast("Synced."); renderMeshCard(isOwner); }
-    catch (e) { toast(e.message); }
-  };
-  card.querySelectorAll(".mesh-rm").forEach(b => b.onclick = async () => {
-    if (!confirm("Stop syncing with this instance?")) return;
-    try { await api("/api/mesh/peers/" + b.dataset.id, { method: "DELETE" }); renderMeshCard(isOwner); }
-    catch (e) { toast(e.message); }
-  });
-  // pairing UI for unpaired peers (owner): pick one of their circles to link
-  const pairWraps = card.querySelectorAll("[data-pairwrap]");
-  if (pairWraps.length) {
-    api("/api/mesh/remote-circles").then(d => {
-      const byNode = {};
-      (d.nodes || []).forEach(n => byNode[n.nodeId] = n.circles);
-      pairWraps.forEach(w => {
-        const sel = w.querySelector("[data-remote-circles]");
-        const circles = byNode[w.dataset.pairwrap] || [];
-        sel.innerHTML = circles.length
-          ? circles.map(c => `<option value="${esc(c.meshId)}">${esc(c.name)}</option>`).join("")
-          : `<option value="">No circles advertised yet</option>`;
-      });
-    }).catch(() => {});
-    card.querySelectorAll("[data-pair]").forEach(b => b.onclick = async () => {
-      const wrap = card.querySelector(`[data-pairwrap="${b.dataset.pair}"]`);
-      const meshId = wrap ? wrap.querySelector("[data-remote-circles]").value : "";
-      if (!meshId) { toast("Their circles haven't shown up yet — sync once more, then try again."); return; }
-      try {
-        await api("/api/mesh/pair", { method: "POST", body: JSON.stringify({ peerId: b.dataset.pair, circleId: Number(activeCircleId()), remoteMeshId: meshId }) });
-        toast("Circles paired. Syncing…");
-        renderMeshCard(isOwner);
-      } catch (e) { toast(e.message); }
-    });
-  }
-}
-
-/* ---------- Notes on IMAP: two-way sync with a folder on your mail server ---------- */
-async function renderImapCard() {
-  const card = $("#imap-card");
+/* ---------- settings ---------- */
+async function renderMailCard() {
+  const card = $("#mail-card");
   if (!card) return;
   let st;
   try { st = await api("/api/imap"); }
-  catch (e) { card.innerHTML = `<p class="sub">Couldn't check IMAP status: ${esc(e.message)}</p>`; return; }
+  catch (e) { card.innerHTML = `<p class="sub">Couldn't check mail status: ${esc(e.message)}</p>`; return; }
   const syncLine = st.configured
-    ? `<p class="sub" style="margin:0 0 10px">${st.lastSyncAt ? "Last synced " + esc(relTime(st.lastSyncAt)) + "." : "Not synced yet."}` +
-      (st.lastError ? ` <span style="color:var(--danger)">Last error: ${esc(st.lastError)}</span>` : "") + `</p>`
-    : `<p class="sub" style="margin:0 0 10px">Mirror your notepad into a <span class="mono">Notes</span> folder on your own mail server — readable from any mail app, writable back into Abba. Only your notes sync; the circle's shared notes stay here.</p>`;
+    ? `<p class="sub" style="margin:0 0 10px">${st.lastSyncAt ? "Notes synced " + esc(relTime(st.lastSyncAt)) + "." : "Not synced yet."}` +
+      (st.lastError ? ` <span style="color:var(--danger)">Last error: ${esc(st.lastError)}</span>` : "") +
+      (st.lastShareScanAt ? `<br>Shared inbox checked ${esc(relTime(st.lastShareScanAt))}.` : "") + `</p>`
+    : `<p class="sub" style="margin:0 0 10px">One account does two jobs: it mirrors your notepad into a <span class="mono">Notes</span> folder on your mail server, and it sends the emails when you share a note. Passwords never leave this Abba.</p>`;
   card.innerHTML = `
     ${st.configured ? `<p class="sub" style="margin:0 0 10px"><span class="mono">${esc(st.username)}@${esc(st.host)}</span> → <span class="mono">${esc(st.folder)}</span></p>` : ""}
     ${syncLine}
@@ -1239,6 +839,11 @@ async function renderImapCard() {
       <input id="imap-folder" placeholder="Notes" style="flex:1;min-width:0" autocomplete="off" value="${esc(st.folder || "Notes")}">
       <button class="btn btn-primary" id="imap-save">${st.configured ? "Save" : "Connect"}</button>
     </div>
+    <p class="sub" style="margin:10px 0 6px">Sending (SMTP) — usually the same account. Leave blank to guess from the IMAP host.</p>
+    <div class="btn-row">
+      <input id="smtp-host" placeholder="smtp.example.com" style="flex:2;min-width:0" autocomplete="off" value="${esc(st.smtpHost || "")}">
+      <input id="smtp-port" placeholder="587" inputmode="numeric" style="flex:1;min-width:0;max-width:76px" value="${esc(st.smtpPort || "587")}">
+    </div>
     ${st.configured ? `
     <div class="btn-row" style="margin-top:8px">
       <button class="btn btn-ghost" id="imap-sync">Sync now</button>
@@ -1252,12 +857,14 @@ async function renderImapCard() {
       username: $("#imap-user").value.trim(),
       password: $("#imap-pass").value,
       folder: $("#imap-folder").value.trim() || "Notes",
+      smtpHost: $("#smtp-host").value.trim(),
+      smtpPort: Number($("#smtp-port").value.trim()) || 587,
     };
     if (!payload.host || !payload.username || (!payload.password && !st.configured)) { toast("Host, username, and password are required."); return; }
     try {
-      await api("/api/imap", { method: "PUT", body: JSON.stringify(payload) });
-      toast(st.configured ? "Saved." : "Connected — first sync is on its way.");
-      renderImapCard();
+      const d = await api("/api/imap", { method: "PUT", body: JSON.stringify(payload) });
+      toast(d.smtpWarning || (st.configured ? "Saved." : "Connected — first sync is on its way."));
+      renderMailCard();
     } catch (e) { toast(e.message); }
   };
   const sy = $("#imap-sync");
@@ -1268,222 +875,94 @@ async function renderImapCard() {
       toast(r.errors.length ? "Sync had trouble: " + r.errors[0] : `Synced — ${r.pushed} up, ${r.pulled} down.`);
     } catch (e) { toast(e.message); }
     sy.disabled = false;
-    renderImapCard();
+    renderMailCard();
   };
   const dr = $("#imap-drop");
   if (dr) dr.onclick = async () => {
-    if (!confirm("Disconnect IMAP? Your notes stay in Abba; nothing is deleted from your mail.")) return;
-    try { await api("/api/imap", { method: "DELETE" }); toast("Disconnected."); renderImapCard(); }
+    if (!confirm("Disconnect mail? Your notes stay in Abba; nothing is deleted from your mail.")) return;
+    try { await api("/api/imap", { method: "DELETE" }); toast("Disconnected."); renderMailCard(); }
     catch (e) { toast(e.message); }
   };
 }
 
-/* ---------- welcome ---------- */
-async function viewWelcome() {
-  tabbar.hidden = true;
-  const hasCircle = await api("/api/status").then(d => d.hasCircle).catch(() => false);
-  const ownerHere = !!(state.me && state.me.role === "owner");
-  app.innerHTML = `<div class="welcome">
-    <div class="mark">◯</div>
-    <h1>Abba</h1>
-    <p class="tagline">A quiet notepad for you and your circle.</p>
-    <div class="creed">
-      <div><b>Soulfulness</b> — written for humans, not feeds</div>
-      <div><b>Effectiveness</b> — ideas that move, not just accumulate</div>
-      <div><b>Flow</b> — capture in seconds, find in less</div>
-      <div><b>Unity</b> — a small circle, thinking together</div>
+async function viewSettings() {
+  renderTabs("settings");
+  app.innerHTML = `
+    <h1 class="large-title">Settings</h1>
+    <p class="section-label">Mail</p>
+    <div class="card" id="mail-card"><p class="sub">Checking…</p></div>
+    <p class="section-label">Backup</p>
+    <div class="card">
+      <p class="sub" style="margin:0 0 10px">Your notes as one JSON file — keep it somewhere safe.</p>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="bk-export">Download backup</button>
+        <label class="btn btn-ghost" style="cursor:pointer">Import backup<input id="bk-file" type="file" accept=".json,application/json" style="display:none"></label>
+      </div>
     </div>
-    <div class="card" style="text-align:left">
-      <div class="eyebrow" style="margin-top:0">Begin</div>
-      ${hasCircle ? "" : `<div class="field"><label>Your circle's name</label><input id="w-circle" placeholder="e.g. The Corner Table" maxlength="60"></div>`}
-      <div class="field"><label>Your name</label><input id="w-name" placeholder="What should the circle call you?" maxlength="40"></div>
-      ${hasCircle ? `<div class="field"><label>Invite code or user ID</label><input id="w-code" placeholder="abba-… or usr-…" autocomplete="off"></div>` : ""}
-      <div class="btn-row"><button class="btn btn-primary" id="w-go">${hasCircle ? "Join the circle" : "Start our circle"}</button></div>
+    <p class="section-label">About</p>
+    <div class="card">
+      <p class="sub" style="margin:0 0 10px">Abba is a single-user notepad. There is no sign-in — this page is reachable only on this machine, and Deck's sign-in guards the way in.</p>
+      <div class="btn-row" id="install-row" style="display:none">
+        <button class="btn btn-ghost" id="acc-install">Install Abba on this device</button>
+      </div>
     </div>
-    ${hasCircle ? `<p class="sub" style="margin-top:14px"><a href="#" id="w-reopen-link" style="color:var(--terra-deep)">Lost your sign-in? Re-open with a secret</a></p>` : ""}
-    ${hasCircle ? `<p class="sub" style="margin-top:10px"><a href="#" id="w-fresh-link" class="text-danger">Or start a brand new circle</a></p>` : ""}
-    <div class="card" id="w-fresh-card" style="display:none;text-align:left">
-      <div class="eyebrow text-danger" style="margin-top:0">Brand new circle</div>
-      <p class="sub" style="margin:0 0 10px">This wipes the current circle — notes, members, identity — and starts over. There's no undo.</p>
-      <div class="field"><label>New circle's name</label><input id="w-f-circle" placeholder="e.g. The Corner Table" maxlength="60"></div>
-      <div class="field"><label>Your name</label><input id="w-f-name" placeholder="What should the circle call you?" maxlength="40"></div>
-      ${ownerHere ? "" : `
-      <div class="field"><label>Current owner's name (if they set a secret)</label><input id="w-f-owner" placeholder="The name the circle knows them by" maxlength="40"></div>
-      <div class="field"><label>Owner's secret (if set)</label><input id="w-f-pass" type="password" placeholder="Their secret phrase" autocomplete="current-password"></div>`}
-      <div class="btn-row"><button class="btn btn-ghost btn-danger" id="w-f-go">Wipe and start fresh</button></div>
-    </div>
-    <div class="card" id="w-reopen-card" style="display:none;text-align:left">
-      <div class="eyebrow" style="margin-top:0">Re-open your account</div>
-      <div class="field"><label>Your name</label><input id="w-r-name" placeholder="The name the circle knows you by" maxlength="40"></div>
-      <div class="field"><label>Secret</label><input id="w-r-pass" type="password" placeholder="Your secret phrase" autocomplete="current-password"></div>
-      <div class="btn-row"><button class="btn btn-primary" id="w-r-go">Re-open my account</button></div>
-      <p class="sub" style="margin:10px 0 0">Works on this Abba, or anywhere your account reached through mesh sync.</p>
-    </div>
-    ${hasCircle ? `
-    <div class="card" style="text-align:left;margin-top:14px">
-      <div class="eyebrow" style="margin-top:0">Migrating from another circle?</div>
-      <p class="sub" style="margin:0">Importing starts a brand-new circle, and this Abba already has one — reset it first (owner · Circle → Danger zone), or import your bundle on a fresh Abba.</p>
-    </div>` : `
-    <div class="card" style="text-align:left;margin-top:14px">
-      <div class="eyebrow" style="margin-top:0">Migrating from another circle?</div>
-      <p class="sub" style="margin:0 0 10px">Import your migration bundle — you become host of a fresh circle with your notes, links, and comments.</p>
-      <div class="field"><label>Your circle's name</label><input id="w-m-circle" placeholder="e.g. Ari's Circle" maxlength="60"></div>
-      <div class="field"><label>Migration bundle</label><input id="w-m-file" type="file" accept=".json,application/json"></div>
-      <div class="btn-row"><button class="btn btn-ghost" id="w-m-go">Import bundle</button></div>
-    </div>`}
-    <p class="sub" style="margin-top:18px">Small circles, thinking together.</p>
-  </div>`;
-  const rl = $("#w-reopen-link");
-  if (rl) rl.onclick = (e) => {
-    e.preventDefault();
-    $("#w-reopen-card").style.display = "block";
-    rl.parentElement.style.display = "none";
-  };
-  const rgo = $("#w-r-go");
-  if (rgo) rgo.onclick = async () => {
-    const name = ($("#w-r-name") || {}).value || "";
-    const password = ($("#w-r-pass") || {}).value || "";
-    if (!name.trim() || !password) { toast("Name and secret, both."); return; }
+    <p class="foot-note">S · E · F · U — soulfulness, effectiveness, flow, unity.</p>`;
+  renderMailCard();
+  $("#bk-export").onclick = async () => {
     try {
-      const code = (($("#w-code") || {}).value || "").trim();
-      const data = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: name.trim(), password, code: code || undefined }) });
-      rememberCircle(data.circle.id, data.token, data.circle.name);
-      toast(data.fromMesh ? "Account restored from the mesh. Welcome back." : "Welcome back.");
-      location.hash = "#/folders";
-      await boot(true);
+      const res = await fetch("/api/backup");
+      if (!res.ok) throw new Error("Backup failed");
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "abba-backup.json";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     } catch (e) { toast(e.message); }
   };
-  const fl = $("#w-fresh-link");
-  if (fl) fl.onclick = (e) => {
-    e.preventDefault();
-    const c = $("#w-fresh-card");
-    if (c) c.style.display = c.style.display === "none" ? "" : "none";
-  };
-  const fgo = $("#w-f-go");
-  if (fgo) fgo.onclick = async () => {
-    const circleName = (($("#w-f-circle") || {}).value || "").trim();
-    const ownerName = ($("#w-f-name") || {}).value || "";
-    if (!circleName || !ownerName.trim()) { toast("Name the circle and yourself."); return; }
-    if (!confirm("Wipe this Abba completely and start \"" + circleName + "\"? There's no undo.")) return;
+  $("#bk-file").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
     try {
-      if (!(state.me && state.me.role === "owner")) {
-        // owner secret when one exists; pre-secrets instances skip this via the recovery hatch
-        const on = (($("#w-f-owner") || {}).value || "").trim();
-        const op = (($("#w-f-pass") || {}).value || "");
-        if (on && op) {
-          const ro = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: on, password: op }) });
-          if (ro.member.role !== "owner") { toast("Only the owner can start a brand new circle."); return; }
-          rememberCircle(ro.circle.id, ro.token, ro.circle.name);
-        }
-      }
-      const init = await api("/api/circle/fresh-start", {
-        method: "POST", body: JSON.stringify({ name: circleName, ownerName: ownerName.trim() }),
-      });
-      try { localStorage.removeItem("abba_circles"); } catch (e) {}
-      rememberCircle(init.circle.id, init.token, init.circle.name);
-      toast("Fresh circle, fresh start.");
-      location.hash = "#/folders";
-      await boot(true);
-    } catch (e) { toast(e.message); }
+      const data = JSON.parse(await f.text());
+      const r = await api("/api/backup", { method: "POST", body: JSON.stringify(data) });
+      toast(r.imported + " notes imported.");
+      e.target.value = "";
+    } catch (err) { toast(err.message); }
+  });
+  const showInstall = () => {
+    const row = $("#install-row");
+    if (row && window.__deferredInstall) row.style.display = "";
   };
-  const mgo = $("#w-m-go");
-  if (mgo) mgo.onclick = async () => {
-    const f = ($("#w-m-file") || {}).files || [];
-    if (!f.length) { toast("Choose your migration bundle first."); return; }
-    try {
-      const bundle = JSON.parse(await f[0].text());
-      const circleName = (($("#w-m-circle") || {}).value || "").trim();
-      const data = await api("/api/circle/import", {
-        method: "POST", body: JSON.stringify({ bundle, circleName: circleName || undefined }),
-      });
-      rememberCircle(data.circle.id, data.token, data.circle.name);
-      toast("Welcome home, host.");
-      location.hash = "#/folders";
-      await boot(true);
-    } catch (e) { toast(e.message); }
+  window.addEventListener("abba:installable", showInstall);
+  showInstall();
+  const instBtn = $("#acc-install");
+  if (instBtn) instBtn.onclick = async () => {
+    const p = window.__deferredInstall;
+    if (!p) return;
+    window.__deferredInstall = null;
+    const row = $("#install-row");
+    if (row) row.style.display = "none";
+    p.prompt();
+    try { await p.userChoice; } catch (e) {}
   };
-  $("#w-go").onclick = async () => {
-    const name = ($("#w-name") || {}).value || "";
-    if (!name.trim()) { toast("Tell us your name first."); return; }
-    try {
-      const wCode = (($("#w-code") || {}).value || "").trim();
-      let data;
-      if (!hasCircle) {
-        data = await api("/api/circle/init", { method: "POST", body: JSON.stringify({ name: ($("#w-circle") || {}).value || "The Circle", ownerName: name.trim() }) });
-      } else if (wCode.toLowerCase().startsWith("usr-")) {
-        data = await api("/api/join", { method: "POST", body: JSON.stringify({ userId: wCode, name: name.trim() }) });
-      } else {
-        const look = await api("/api/invite/lookup?code=" + encodeURIComponent(wCode));
-        let circleId = null;
-        if (look.kind === "local") {
-          circleId = look.circle.id;
-        } else {
-          // a peered instance's code: pick which of your circles it opens
-          const pick = prompt("That code is honored mesh-wide. Which circle should it open?\n" +
-            look.circles.map((c, i) => (i + 1) + ". " + c.name).join("\n") + "\n\nEnter a number:");
-          const chosen = look.circles[Number(pick) - 1];
-          if (!chosen) { toast("Pick one of your circles."); return; }
-          circleId = chosen.id;
-        }
-        data = await api("/api/join", { method: "POST", body: JSON.stringify({ code: wCode, circleId, name: name.trim() }) });
-      }
-      rememberCircle(data.circle.id, data.token, data.circle.name);
-      location.hash = "#/folders";
-      await boot(true);
-    } catch (e) { toast(e.message); }
-  };
-}
-
-/* ---------- presence heartbeat (invisible) ---------- */
-let hbTimer = null;
-function heartbeat(view) {
-  clearTimeout(hbTimer);
-  const beat = () => api("/api/me?view=" + encodeURIComponent(view), {}).catch(() => {});
-  hbTimer = setTimeout(function tick() { beat(); hbTimer = setTimeout(tick, 45000); }, 45000);
 }
 
 /* ---------- boot & router ---------- */
-async function boot() {
-  await migrateLegacyToken();
-  const cid = activeCircleId();
-  if (!cid || !activeToken()) { viewWelcome(); return; }
-  try {
-    const [me, circle] = await Promise.all([
-      api("/api/me").then(d => d.member),
-      api("/api/circle"),
-    ]);
-    state.me = me; state.circle = circle;
-    // keep the stored circle name fresh
-    const s = circleStore();
-    if (s[cid]) { s[cid].name = circle.name; saveCircleStore(s); }
-    route();
-  } catch (e) {
-    // this circle's token is dead — forget it and try the next, else welcome
-    forgetCircle(cid);
-    if (activeCircleId() && activeToken()) { await boot(); return; }
-    viewWelcome();
-  }
-}
 function route() {
   const h = location.hash || "#/folders";
   window.scrollTo(0, 0);
   if (h.startsWith("#/note/")) { const ed = h.includes("?edit"); viewDetail(h.split("/")[2].split("?")[0], ed); }
+  else if (h.startsWith("#/shared/")) viewSharedNote(h.split("/")[2]);
   else if (h.startsWith("#/list/")) {
     const parts = h.split("/");
     if (parts[2] === "topic") viewTopic(decodeURIComponent(parts.slice(3).join("/")));
-    else viewList(parts[2] || "mine");
+    else viewList(parts[2] || "notes");
   }
-  else if (h.startsWith("#/compose/")) viewCompose(h.split("/")[2] || "mine");
+  else if (h === "#/compose") viewCompose();
   else if (h.startsWith("#/letter/")) viewLetter(h.split("/")[2]);
-  else if (h === "#/members") viewMembers();
-  else if (h === "#/folders") { if (state.me) viewFolders(); else viewWelcome(); }
-  else if (h.startsWith("#/welcome")) viewWelcome();
-  else if (state.me) viewFolders();
-  else viewWelcome();
-  if (h.startsWith("#/welcome")) {
-    const m = h.match(/code=([^&]+)/);
-    setTimeout(() => { const c = $("#w-code"); if (c && m) c.value = decodeURIComponent(m[1]); }, 50);
-  }
+  else if (h === "#/settings") viewSettings();
+  else viewFolders();
 }
-window.addEventListener("hashchange", () => { if (state.me || (location.hash || "").startsWith("#/welcome")) route(); });
-boot();
+window.addEventListener("hashchange", route);
+route();

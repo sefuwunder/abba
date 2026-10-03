@@ -12,16 +12,15 @@ Abba is an exercise in the S.E.F.U. software philosophy:
 ### Soulfulness
 
 - **Paper and ink, not glass and neon.** Warm paper background, serif reading type, muted terracotta. The executive reads ideas the way they'd read a letter.
-- **Language is gentle everywhere.** "Bring to circle" instead of "Publish". "Let it rest" instead of "Archive". "That idea isn't here anymore" instead of "404".
+- **Language is gentle everywhere.** "Share by email" instead of "Publish". "Let it rest" instead of "Archive". "That note isn't here anymore" instead of "404".
 - **Nudges, never notifications.** No badges, no counts, no red. A stale sprout gets one quiet card: *"still alive, or time to let it rest?"* — dismissible, never repeated.
-- **Presence without surveillance.** "Ari and June are here now" — no read receipts, no "seen by", no typing indicators.
+- **No surveillance.** No presence, no read receipts, no typing indicators — it's a notepad, not a network.
 
 ### Effectiveness
 
 - **Ideas have a lifecycle:** seed → sprout → in motion → decided, plus resting. An executive doesn't need more notes; they need to know what moved.
 - **The digest is a decision instrument.** "What moved" and "Still simmering" turn a week of thinking into something you can act on Monday morning.
-- **Reactions carry meaning, not vanity.** ❤ *felt this*, 💡 *sparked*, 🙌 *yes* — each is a signal about the idea's resonance, not a popularity contest.
-- **Related ideas** surface connections across the circle's thinking without anyone having to maintain links.
+- **Related ideas** surface connections across your thinking without you having to maintain links.
 
 ### Flow
 
@@ -32,9 +31,9 @@ Abba is an exercise in the S.E.F.U. software philosophy:
 
 ### Unity
 
-- **Intimate by design.** One Abba can hold several circles — family, work, friends — each capped at 12 members. Joining is an invite code and a name — no accounts, no passwords, no growth mechanics.
-- **Share deliberately.** Notes start private; "Bring to circle" is a conscious act of trust.
-- **The digest is written as "we".** "This week in the circle", "the conversation kept going" — the group's thinking, reflected back to itself.
+- **One person, lightly connected.** Abba is a single-user notepad — no accounts, no passwords, no growth mechanics. There is no sign-in at all: the server only listens on this machine, and Deck's sign-in guards the way in.
+- **Share deliberately.** Notes start private; sending one by email is a conscious act. The email *is* the invite — if the other person uses Abba, it lands in their *Shared with me* shelf.
+- **The digest is written as "you".** "This week in your notepad" — your own thinking, reflected back to you.
 
 ## The invisible agent
 

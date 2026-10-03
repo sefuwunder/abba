@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#FAF6F1">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#161210">
-<title>Abba — a quiet notepad for you and your circle</title>
+<title>Abba — a quiet notepad</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -26,7 +26,7 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(function () {});
   });
 }
-// PWA install prompt, captured for the Circle view's install button
+// PWA install prompt, captured for the Settings view's install button
 window.__deferredInstall = null;
 window.addEventListener("beforeinstallprompt", function (e) {
   e.preventDefault();

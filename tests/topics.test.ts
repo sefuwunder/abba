@@ -45,7 +45,7 @@ beforeAll(() => {
   g.navigator = {};
 
   let js = readFileSync(join(ROOT, "public", "app.js"), "utf8");
-  js = js.replace(/\nboot\(\);?\s*$/, ""); // don't boot; test pure functions
+  js = js.replace(/\nroute\(\);?\s*$/, ""); // don't boot; test pure functions
   eval(js + "\n;globalThis.__abbaTopics = { topicFolders, capTag };");
   ({ topicFolders, capTag } = g.__abbaTopics);
   delete g.__abbaTopics;

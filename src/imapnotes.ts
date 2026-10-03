@@ -221,12 +221,13 @@ function readMins(body: string): number {
   return Math.max(1, Math.round(words / 200));
 }
 
-/** Two-way sync for one member. Never throws — errors land in the result.
- *  `opts.insecure` talks plain TCP and exists for the local test fake only. */
-export async function syncImapAccount(memberId: number, opts: { insecure?: boolean } = {}): Promise<SyncResult> {
+/** Two-way sync of the notepad with the Notes folder. Never throws —
+ *  errors land in the result. `opts.insecure` talks plain TCP and exists
+ *  for the local test fake only. */
+export async function syncImapAccount(opts: { insecure?: boolean } = {}): Promise<SyncResult> {
   const db = getDb();
   const result: SyncResult = { pushed: 0, pulled: 0, deleted: 0, errors: [] };
-  const acct = db.query("SELECT * FROM imap_accounts WHERE member_id = ?").get(memberId) as any;
+  const acct = db.query("SELECT * FROM imap_account WHERE id = 1").get() as any;
   if (!acct) { result.errors.push("IMAP not configured."); return result; }
   const cfg: ImapAccount = {
     host: acct.host, port: acct.port || 993,
@@ -234,7 +235,7 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
   };
   const { conn } = await connectAndLogin(toCfg(cfg, !!opts.insecure)).catch((e: any) => {
     const msg = String((e && e.message) || e).slice(0, 200);
-    try { db.query("UPDATE imap_accounts SET last_error = ? WHERE member_id = ?").run(msg, memberId); } catch { /* db gone */ }
+    try { db.query("UPDATE imap_account SET last_error = ? WHERE id = 1").run(msg); } catch { /* db gone */ }
     result.errors.push(msg);
     return { conn: null as Conn | null };
   });
@@ -244,7 +245,7 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
     const remote = await listMessages(conn);
     const byAbbaId = new Map<string, RemoteMsg>();
     for (const m of remote) if (m.abbaId && !m.flags.includes("\\Deleted")) byAbbaId.set(m.abbaId, m);
-    const notes = db.query("SELECT * FROM notes WHERE member_id = ?").all(memberId) as any[];
+    const notes = db.query("SELECT * FROM notes").all() as any[];
     const noteIds = new Set(notes.map((n) => "note-" + n.id));
     const matchedUids = new Set<number>();
 
@@ -281,10 +282,9 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
       const p = parseMessage(await fetchRaw(conn, m.uid));
       if (!p.body && !p.subject) continue;
       const t = nowIso();
-      const mem = db.query("SELECT circle_id FROM members WHERE id = ?").get(memberId) as any;
-      const r = db.query(`INSERT INTO notes (circle_id, member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`)
-        .run(mem?.circle_id || 1, memberId, p.subject || "Untitled", p.body, JSON.stringify(p.tags),
+      const r = db.query(`INSERT INTO notes (title, body, tags, status, read_mins, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(p.subject || "Untitled", p.body, JSON.stringify(p.tags),
           STATUSES.includes(p.status as any) ? p.status : "seed", readMins(p.body), t, t);
       const newId = Number(r.lastInsertRowid);
       await conn.cmd("a023", `UID STORE ${m.uid} +FLAGS (\\Deleted)`);
@@ -304,10 +304,10 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
     }
 
     await conn.cmd("a026", "EXPUNGE");
-    db.query("UPDATE imap_accounts SET last_sync_at = ?, last_error = '' WHERE member_id = ?").run(nowIso(), memberId);
+    db.query("UPDATE imap_account SET last_sync_at = ?, last_error = '' WHERE id = 1").run(nowIso());
   } catch (e: any) {
     const msg = String((e && e.message) || e).slice(0, 200);
-    try { db.query("UPDATE imap_accounts SET last_error = ? WHERE member_id = ?").run(msg, memberId); } catch { /* db gone */ }
+    try { db.query("UPDATE imap_account SET last_error = ? WHERE id = 1").run(msg); } catch { /* db gone */ }
     result.errors.push(msg);
   } finally {
     conn.close();
