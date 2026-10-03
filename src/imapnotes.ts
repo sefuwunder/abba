@@ -281,9 +281,10 @@ export async function syncImapAccount(memberId: number, opts: { insecure?: boole
       const p = parseMessage(await fetchRaw(conn, m.uid));
       if (!p.body && !p.subject) continue;
       const t = nowIso();
-      const r = db.query(`INSERT INTO notes (member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)`)
-        .run(memberId, p.subject || "Untitled", p.body, JSON.stringify(p.tags),
+      const mem = db.query("SELECT circle_id FROM members WHERE id = ?").get(memberId) as any;
+      const r = db.query(`INSERT INTO notes (circle_id, member_id, title, body, tags, status, shared, read_mins, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`)
+        .run(mem?.circle_id || 1, memberId, p.subject || "Untitled", p.body, JSON.stringify(p.tags),
           STATUSES.includes(p.status as any) ? p.status : "seed", readMins(p.body), t, t);
       const newId = Number(r.lastInsertRowid);
       await conn.cmd("a023", `UID STORE ${m.uid} +FLAGS (\\Deleted)`);

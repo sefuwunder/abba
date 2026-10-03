@@ -133,6 +133,78 @@ function migrate(d: Database): void {
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_members_user_id ON members(user_id)");
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_gid ON notes(gid)");
   d.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_rgid ON comments(remote_gid)");
+  migrateMultiCircle(d);
+}
+
+/**
+ * Multi-circle migration (2026-10-03): one instance can host many circles.
+ * - circle: drop CHECK(id = 1), autoincrement ids, add stable mesh_id.
+ * - members/notes/events/digests/invited_users: circle_id (existing rows -> 1).
+ * - digests: UNIQUE(week_key) -> UNIQUE(week_key, circle_id).
+ * - circle_peers: mesh pairing of a local circle to a remote circle.
+ */
+function migrateMultiCircle(d: Database): void {
+  const cols = (t: string) => (d.query(`PRAGMA table_info(${t})`).all() as any[]).map((c) => c.name);
+  const indexes = (t: string) => (d.query(`PRAGMA index_list(${t})`).all() as any[]).map((i) => i.name);
+
+  if (!cols("circle").includes("mesh_id")) {
+    d.exec(`
+      CREATE TABLE circle_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL DEFAULT 'The Circle',
+        invite_code TEXT NOT NULL,
+        invite_expires_at TEXT,
+        member_cap INTEGER NOT NULL DEFAULT 12,
+        mesh_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO circle_new (id, name, invite_code, invite_expires_at, member_cap, created_at)
+        SELECT id, name, invite_code, invite_expires_at, member_cap, created_at FROM circle;
+      DROP TABLE circle;
+      ALTER TABLE circle_new RENAME TO circle;
+    `);
+    for (const r of d.query(`SELECT id FROM circle`).all() as any[]) {
+      d.query(`UPDATE circle SET mesh_id = ? WHERE id = ?`).run(randomMeshId(), r.id);
+    }
+    d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_circle_mesh_id ON circle(mesh_id)`);
+    d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_circle_invite_code ON circle(invite_code)`);
+  }
+
+  for (const table of ["members", "notes", "events", "digests", "invited_users"]) {
+    if (!cols(table).includes("circle_id")) {
+      d.exec(`ALTER TABLE ${table} ADD COLUMN circle_id INTEGER NOT NULL DEFAULT 1`);
+    }
+  }
+
+  if (!indexes("digests").includes("idx_digests_week_circle")) {
+    d.exec(`
+      CREATE TABLE digests_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        circle_id INTEGER NOT NULL DEFAULT 1,
+        week_key TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO digests_new (circle_id, week_key, payload, created_at)
+        SELECT 1, week_key, payload, created_at FROM digests;
+      DROP TABLE digests;
+      ALTER TABLE digests_new RENAME TO digests;
+      CREATE UNIQUE INDEX idx_digests_week_circle ON digests(week_key, circle_id);
+    `);
+  }
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS circle_peers (
+      local_circle_id INTEGER NOT NULL REFERENCES circle(id) ON DELETE CASCADE,
+      peer_node_id TEXT NOT NULL,
+      remote_mesh_id TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (local_circle_id, peer_node_id)
+    );
+  `);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_members_circle ON members(circle_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_notes_circle ON notes(circle_id)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_events_circle ON events(circle_id)`);
 }
 
 export function nowIso(): string {
@@ -162,8 +234,11 @@ export function isUserId(s: string): boolean {
   return /^usr-[A-Za-z0-9_-]{16,}$/.test(String(s || "").trim());
 }
 
-// Circle invite codes expire after 7 days and are honored mesh-wide:
-// a code issued by any peered instance joins that instance's circle.
+export function randomMeshId(): string {
+  const bytes = new Uint8Array(9);
+  crypto.getRandomValues(bytes);
+  return "cir-" + Buffer.from(bytes).toString("base64url");
+}
 export const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
 export function inviteExpiryIso(): string {
   return new Date(Date.now() + INVITE_TTL_MS).toISOString();

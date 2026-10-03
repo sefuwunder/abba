@@ -34,7 +34,7 @@ Modeled after Apple Notes — folders, large titles, hairlines, quiet yellow:
 - **Notes lists** — title + "date · status — excerpt" rows, per-folder search, floating compose button (composing inside The Circle shares immediately)
 - **Note view** — calm reading type, your presence pill floats above the tab bar (tap: zen status icons, rest/share, and reactions fan out over the interface), related notes, conversation, export. ` ```mermaid ` fenced blocks render as diagrams (flowcharts, sequence diagrams, and more) in Abba's warm theme, light and dark — the library is vendored locally, so it works offline and no CDN is ever contacted
 - **Weekly Letters** — every digest edition on a shelf, newest first, each reading like a short editorial letter
-- **Circle** — members with quiet presence, invite code card (owner can rotate it; codes last 7 days and work on any peered Abba), per-member user IDs, owner-only targeted invites by user ID
+- **Circle** — members with quiet presence, invite code card (owner can rotate it; codes last 7 days and work on any peered Abba), per-member user IDs, owner-only targeted invites by user ID. One Abba holds **several circles** — switch between them in Circle → Your circles; each has its own members, notes, digest shelf, and invite code. Any member can start a new circle (they become its owner); members can leave a circle, owners burn or migrate it.
 - **Nudges** — small, dismissible, never badges: stale sprouts, unread ideas
 
 ## Layout
@@ -51,7 +51,7 @@ scripts/        screenshot helpers (dev only)
 ## Tests
 
 ```bash
-bun test   # 100 tests: circle lifecycle + mind unit + two-instance mesh sync (invite + knock) + mesh-wide expiring codes + targeted user-ID invites
+bun test   # 150 tests: circle lifecycle + multi-circle isolation + mind unit + two-instance mesh sync (invite + knock) + mesh-wide expiring codes + targeted user-ID invites + circle-paired mesh routing
 ```
 
 ## Mesh sync (peer-to-peer)
@@ -77,6 +77,12 @@ circle notes replicate over each instance's Cloudflare tunnel:
   lost to a concurrent edit.
 - Sync runs every 30s; **Sync now** forces a round. All payloads are
   signature-checked before they touch the database.
+- **Circle pairing.** Peering links one of *your* circles to one of *theirs*:
+  joining or knocking pairs the circle you're viewing with the other side's
+  oldest circle, and shared notes route only into the paired circle. With
+  several circles, pair explicitly in Circle → Mesh sync (each unpaired peer
+  gets a Pair control listing the remote's circles). Peers that predate this
+  keep syncing with the first circle, as before.
 
 Each instance needs its public tunnel address:
 
@@ -152,5 +158,5 @@ ambiguously. Remote (synced) shadow members can never be re-opened.
 
 ## Notes
 
-- One circle per Abba instance. Data lives in `./data/abba.db` (gitignored).
+- Several circles per Abba instance, each with its own members, notes, and invite code. Data lives in `./data/abba.db` (gitignored).
 - Reduced-motion supported. Muted terracotta palette; nothing shouts.

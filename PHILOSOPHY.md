@@ -32,7 +32,7 @@ Abba is an exercise in the S.E.F.U. software philosophy:
 
 ### Unity
 
-- **Intimate by design.** One circle per Abba, capped at 12 members. Joining is an invite code and a name — no accounts, no passwords, no growth mechanics.
+- **Intimate by design.** One Abba can hold several circles — family, work, friends — each capped at 12 members. Joining is an invite code and a name — no accounts, no passwords, no growth mechanics.
 - **Share deliberately.** Notes start private; "Bring to circle" is a conscious act of trust.
 - **The digest is written as "we".** "This week in the circle", "the conversation kept going" — the group's thinking, reflected back to itself.
 

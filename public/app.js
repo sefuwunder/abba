@@ -182,11 +182,57 @@ function renderMermaid() {
   mermaidLoading.then(run).catch(() => { mermaidLoading = null; });
 }
 
+/* ---------- auth: one token per circle ---------- */
+function circleStore() {
+  try { return JSON.parse(localStorage.getItem("abba_circles") || "{}"); }
+  catch (e) { return {}; }
+}
+function saveCircleStore(s) { try { localStorage.setItem("abba_circles", JSON.stringify(s)); } catch (e) {} }
+function activeCircleId() { return localStorage.getItem("abba_active_circle"); }
+function setActiveCircle(id) { try { localStorage.setItem("abba_active_circle", String(id)); } catch (e) {} }
+function activeToken() {
+  const s = circleStore();
+  const e = s[activeCircleId() || ""];
+  return e ? e.token : null;
+}
+function rememberCircle(id, token, name) {
+  const s = circleStore();
+  s[id] = { token, name };
+  saveCircleStore(s);
+  setActiveCircle(id);
+}
+function forgetCircle(id) {
+  const s = circleStore();
+  delete s[String(id)];
+  saveCircleStore(s);
+  if (String(activeCircleId()) === String(id)) {
+    const rest = Object.keys(s);
+    if (rest.length) setActiveCircle(rest[0]);
+    else { try { localStorage.removeItem("abba_active_circle"); } catch (e) {} }
+  }
+}
+function myCircles() {
+  const s = circleStore();
+  return Object.keys(s).map(id => ({ id, name: s[id].name }));
+}
+// one-time migration from the single-token era
+async function migrateLegacyToken() {
+  const old = localStorage.getItem("abba_token");
+  if (!old || Object.keys(circleStore()).length) return;
+  try {
+    const headers = { Authorization: "Bearer " + old };
+    const me = await (await fetch("/api/me", { headers })).json();
+    const circle = await (await fetch("/api/circle", { headers })).json();
+    if (me.member && circle.id) rememberCircle(circle.id, old, circle.name);
+  } catch (e) { /* token was dead; welcome screen will show */ }
+  try { localStorage.removeItem("abba_token"); } catch (e) {}
+}
+
 /* ---------- api ---------- */
 async function api(path, opts) {
   opts = opts || {};
   const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
-  const tok = localStorage.getItem("abba_token");
+  const tok = activeToken();
   if (tok) headers["Authorization"] = "Bearer " + tok;
   const res = await fetch(path, Object.assign({}, opts, { headers }));
   const data = await res.json().catch(() => ({}));
@@ -259,8 +305,11 @@ const TABS = [
 ];
 function renderTabs(active) {
   tabbar.hidden = false;
-  tabbar.innerHTML = TABS.map(([href, g, label, key]) =>
-    `<button class="tab${key === active ? " on" : ""}" data-go="${href}"><span class="g">${g}</span>${label}</button>`).join("");
+  const tabs = TABS.map(([href, g, label, key]) => {
+    const show = key === "circle" && state.circle ? state.circle.name : label;
+    return `<button class="tab${key === active ? " on" : ""}" data-go="${href}"><span class="g">${g}</span>${esc(show)}</button>`;
+  });
+  tabbar.innerHTML = tabs.join("");
   tabbar.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
 }
 function presenceLine() {
@@ -320,7 +369,7 @@ async function viewFolders() {
       <div class="frow" data-go="#/members"><span class="frow-ic">◯</span>
         <span class="frow-name">Members</span><span class="frow-count"></span><span class="chev">›</span></div>
     </div>
-    <p class="foot-note">One circle · stays intimate by design.</p>`;
+    <p class="foot-note">Small circles · stay intimate by design.</p>`;
   bindNudges(app);
   app.querySelectorAll("[data-go]").forEach(r => r.onclick = () => location.hash = r.dataset.go);
   heartbeat("folders");
@@ -437,7 +486,7 @@ async function viewCompose(kind) {
   renderTabs("notes");
   const backHash = kind === "circle" ? "#/list/circle" : "#/list/mine";
   const backLabel = kind === "circle" ? state.circle.name : "My Notepad";
-  const draftKey = "abba_draft_" + kind;
+  const draftKey = "abba_draft_" + (activeCircleId() || "x") + "_" + kind;
   const draft = JSON.parse(localStorage.getItem(draftKey) || '{"title":"","body":"","tags":""}');
   app.innerHTML = `
     <div class="editbar"><button class="back" id="bk">‹ ${esc(backLabel)}</button>
@@ -587,7 +636,7 @@ function bindConvo(note, id) {
 }
 async function downloadNote(id) {
   try {
-    const tok = localStorage.getItem("abba_token");
+    const tok = activeToken();
     const res = await fetch("/api/notes/" + id + "/export", { headers: { Authorization: "Bearer " + tok } });
     if (!res.ok) throw new Error("Export failed");
     const blob = await res.blob();
@@ -797,9 +846,21 @@ async function viewMembers() {
   const hereIds = new Set(here.map(h => h.id));
   const isOwner = state.me.role === "owner";
   const localCount = members.filter(m => m.role !== "remote" && m.role !== "migrated").length;
+  const circles = myCircles();
+  const currentId = String(activeCircleId());
   app.innerHTML = `
-    <h1 class="large-title">Circle</h1>
+    <h1 class="large-title">${esc(state.circle.name)}</h1>
     ${presenceLine()}
+    ${circles.length > 1 ? `
+    <p class="section-label">Your circles</p>
+    <div class="group">
+      ${circles.map(c => `
+        <div class="mrow" data-circle="${esc(c.id)}" style="${String(c.id) === currentId ? "" : "cursor:pointer"}">
+          <span class="dot" style="background:${String(c.id) === currentId ? "var(--terra)" : "var(--faint)"};width:16px;height:16px"></span>
+          <div class="mrow-main"><div class="mrow-name">${esc(c.name)}${String(c.id) === currentId ? " (here)" : ""}</div>
+          <div class="mrow-sub">${String(c.id) === currentId ? "this circle" : "tap to switch"}</div></div>
+        </div>`).join("")}
+    </div>` : ""}
     <p class="section-label">Members · ${localCount} of ${state.circle.memberCap}</p>
     <div class="group">
       ${members.map(m => {
@@ -856,6 +917,18 @@ async function viewMembers() {
         <button class="btn btn-ghost" id="uid-copy">Copy</button>
       </div>
     </div>
+    <p class="section-label">Circles</p>
+    <div class="card">
+      <p class="sub" style="margin:0 0 10px">One Abba can hold several circles — family, work, friends. Each is separate: its own members, notes, and invite code. You become the new circle's owner.</p>
+      <div class="btn-row">
+        <input id="newc-name" placeholder="New circle's name" style="flex:1;min-width:0" maxlength="60">
+        <button class="btn btn-primary" id="newc-go">Start circle</button>
+      </div>
+      ${!isOwner ? `
+      <div style="border-top:1px solid var(--hairline);margin:14px 0"></div>
+      <p class="sub" style="margin:0 0 10px">Leaving removes you from this circle on this device. Your notes stay with the circle; rejoin anytime with the invite code.</p>
+      <div class="btn-row"><button class="btn btn-ghost" id="circ-leave">Leave this circle</button></div>` : ""}
+    </div>
     ${isOwner ? `
     <p class="section-label danger">Danger zone</p>
     <div class="card">
@@ -877,6 +950,38 @@ async function viewMembers() {
     const link = location.origin + location.pathname + "#/welcome?code=" + state.circle.inviteCode;
     try { await navigator.clipboard.writeText(link); toast("Invite link copied."); }
     catch { prompt("Copy this link:", link); }
+  };
+  // switch circles
+  app.querySelectorAll("[data-circle]").forEach(row => {
+    if (row.dataset.circle === String(activeCircleId())) return;
+    row.onclick = async () => {
+      setActiveCircle(row.dataset.circle);
+      location.hash = "#/folders";
+      await boot(true);
+    };
+  });
+  const newcGo = $("#newc-go");
+  if (newcGo) newcGo.onclick = async () => {
+    const nm = ($("#newc-name") || {}).value.trim();
+    if (!nm) { toast("Name the circle."); return; }
+    try {
+      const d = await api("/api/circles", { method: "POST", body: JSON.stringify({ name: nm }) });
+      rememberCircle(d.circle.id, d.token, d.circle.name);
+      toast("Circle started — you're its owner.");
+      location.hash = "#/folders";
+      await boot(true);
+    } catch (e) { toast(e.message); }
+  };
+  const leave = $("#circ-leave");
+  if (leave) leave.onclick = async () => {
+    if (!confirm("Leave \"" + state.circle.name + "\"? You can rejoin with the invite code.")) return;
+    try {
+      await api("/api/circle/leave", { method: "POST" });
+      forgetCircle(activeCircleId());
+      toast("Left the circle.");
+      location.hash = activeCircleId() ? "#/folders" : "#/welcome";
+      await boot(true);
+    } catch (e) { toast(e.message); }
   };
   const regen = $("#regen");
   if (regen) regen.onclick = async () => {
@@ -965,8 +1070,8 @@ async function viewMembers() {
     if (c === null) return;
     try {
       await api("/api/circle/burn", { method: "POST", body: JSON.stringify({ confirm: c }) });
-      localStorage.removeItem("abba_token");
-      location.hash = "#/welcome";
+      forgetCircle(activeCircleId());
+      location.hash = activeCircleId() ? "#/folders" : "#/welcome";
       await boot(true);
     } catch (e) { toast(e.message); }
   };
@@ -988,7 +1093,7 @@ async function viewMembers() {
     if (!confirm("Reset Abba to a fresh install? Everything on this Abba — circle, notes, members, identity — is wiped. This can't be undone.")) return;
     try {
       await api("/api/circle/reset", { method: "POST" });
-      localStorage.removeItem("abba_token");
+      try { localStorage.removeItem("abba_circles"); localStorage.removeItem("abba_active_circle"); } catch (e) {}
       location.hash = "#/welcome";
       await boot(true);
     } catch (e) { toast(e.message); }
@@ -1003,15 +1108,27 @@ async function renderMeshCard(isOwner) {
   try { st = await api("/api/mesh/status"); }
   catch (e) { card.innerHTML = `<p class="sub">Mesh isn't reachable: ${esc(e.message)}</p>`; return; }
   const shortId = st.nodeId.slice(0, 8) + "…" + st.nodeId.slice(-4);
+  const pairings = st.pairings || [];
+  const pairingFor = (peerId) => pairings.filter(p => p.peer_node_id === peerId);
   card.innerHTML = `
     <div class="mesh-head"><span class="mono">${esc(shortId)}</span>
       <span class="sub" style="margin:0">${esc(st.url)}</span></div>
-    ${st.peers.length ? `<div class="mesh-peers">${st.peers.map(p => `
+    ${st.peers.length ? `<div class="mesh-peers">${st.peers.map(p => {
+      const prs = pairingFor(p.id);
+      const pairTxt = prs.length
+        ? prs.map(pr => esc(pr.circle_name || "a circle") + (pr.remote_mesh_id ? "" : " (linking…)")).join(", ")
+        : "not paired — sync paused";
+      return `
       <div class="mrow"><span class="dot" style="background:${p.lastOk ? "var(--sage)" : "var(--faint)"};width:12px;height:12px"></span>
         <div class="mrow-main"><div class="mrow-name mono">${esc(p.id.slice(0, 8))}…</div>
-        <div class="mrow-sub">${esc(p.url)}${p.via ? " · via mesh" : ""}</div></div>
+        <div class="mrow-sub">${esc(p.url)}${p.via ? " · via mesh" : ""}<br>syncs: ${pairTxt}</div></div>
         ${isOwner ? `<button class="btn btn-quiet mesh-rm" data-id="${esc(p.id)}" style="color:#C9BBA6">Remove</button>` : ""}
-      </div>`).join("")}</div>`
+      </div>
+      ${isOwner && !prs.length ? `<div class="btn-row" data-pairwrap="${esc(p.id)}" style="margin:6px 0 10px">
+        <select data-remote-circles style="flex:1;min-width:0"><option>Loading circles…</option></select>
+        <button class="btn btn-ghost" data-pair="${esc(p.id)}">Pair with this circle</button>
+      </div>` : ""}`;
+    }).join("")}</div>`
       : `<p class="sub">No peered instances. Shared notes stay on this Abba until you peer one.</p>`}
     ${isOwner ? `
     <div class="btn-row" style="margin-top:12px">
@@ -1069,6 +1186,31 @@ async function renderMeshCard(isOwner) {
     try { await api("/api/mesh/peers/" + b.dataset.id, { method: "DELETE" }); renderMeshCard(isOwner); }
     catch (e) { toast(e.message); }
   });
+  // pairing UI for unpaired peers (owner): pick one of their circles to link
+  const pairWraps = card.querySelectorAll("[data-pairwrap]");
+  if (pairWraps.length) {
+    api("/api/mesh/remote-circles").then(d => {
+      const byNode = {};
+      (d.nodes || []).forEach(n => byNode[n.nodeId] = n.circles);
+      pairWraps.forEach(w => {
+        const sel = w.querySelector("[data-remote-circles]");
+        const circles = byNode[w.dataset.pairwrap] || [];
+        sel.innerHTML = circles.length
+          ? circles.map(c => `<option value="${esc(c.meshId)}">${esc(c.name)}</option>`).join("")
+          : `<option value="">No circles advertised yet</option>`;
+      });
+    }).catch(() => {});
+    card.querySelectorAll("[data-pair]").forEach(b => b.onclick = async () => {
+      const wrap = card.querySelector(`[data-pairwrap="${b.dataset.pair}"]`);
+      const meshId = wrap ? wrap.querySelector("[data-remote-circles]").value : "";
+      if (!meshId) { toast("Their circles haven't shown up yet — sync once more, then try again."); return; }
+      try {
+        await api("/api/mesh/pair", { method: "POST", body: JSON.stringify({ peerId: b.dataset.pair, circleId: Number(activeCircleId()), remoteMeshId: meshId }) });
+        toast("Circles paired. Syncing…");
+        renderMeshCard(isOwner);
+      } catch (e) { toast(e.message); }
+    });
+  }
 }
 
 /* ---------- Notes on IMAP: two-way sync with a folder on your mail server ---------- */
@@ -1189,7 +1331,7 @@ async function viewWelcome() {
       <div class="field"><label>Migration bundle</label><input id="w-m-file" type="file" accept=".json,application/json"></div>
       <div class="btn-row"><button class="btn btn-ghost" id="w-m-go">Import bundle</button></div>
     </div>`}
-    <p class="sub" style="margin-top:18px">One circle per Abba · stays intimate by design.</p>
+    <p class="sub" style="margin-top:18px">Small circles, thinking together.</p>
   </div>`;
   const rl = $("#w-reopen-link");
   if (rl) rl.onclick = (e) => {
@@ -1203,8 +1345,9 @@ async function viewWelcome() {
     const password = ($("#w-r-pass") || {}).value || "";
     if (!name.trim() || !password) { toast("Name and secret, both."); return; }
     try {
-      const data = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: name.trim(), password }) });
-      localStorage.setItem("abba_token", data.token);
+      const code = (($("#w-code") || {}).value || "").trim();
+      const data = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: name.trim(), password, code: code || undefined }) });
+      rememberCircle(data.circle.id, data.token, data.circle.name);
       toast(data.fromMesh ? "Account restored from the mesh. Welcome back." : "Welcome back.");
       location.hash = "#/folders";
       await boot(true);
@@ -1230,13 +1373,14 @@ async function viewWelcome() {
         if (on && op) {
           const ro = await api("/api/account/reopen", { method: "POST", body: JSON.stringify({ name: on, password: op }) });
           if (ro.member.role !== "owner") { toast("Only the owner can start a brand new circle."); return; }
-          localStorage.setItem("abba_token", ro.token);
+          rememberCircle(ro.circle.id, ro.token, ro.circle.name);
         }
       }
       const init = await api("/api/circle/fresh-start", {
         method: "POST", body: JSON.stringify({ name: circleName, ownerName: ownerName.trim() }),
       });
-      localStorage.setItem("abba_token", init.token);
+      try { localStorage.removeItem("abba_circles"); } catch (e) {}
+      rememberCircle(init.circle.id, init.token, init.circle.name);
       toast("Fresh circle, fresh start.");
       location.hash = "#/folders";
       await boot(true);
@@ -1252,7 +1396,7 @@ async function viewWelcome() {
       const data = await api("/api/circle/import", {
         method: "POST", body: JSON.stringify({ bundle, circleName: circleName || undefined }),
       });
-      localStorage.setItem("abba_token", data.token);
+      rememberCircle(data.circle.id, data.token, data.circle.name);
       toast("Welcome home, host.");
       location.hash = "#/folders";
       await boot(true);
@@ -1263,13 +1407,27 @@ async function viewWelcome() {
     if (!name.trim()) { toast("Tell us your name first."); return; }
     try {
       const wCode = (($("#w-code") || {}).value || "").trim();
-      const joinBody = wCode.startsWith("usr-")
-        ? { userId: wCode, name: name.trim() }
-        : { code: wCode, name: name.trim() };
-      const data = hasCircle
-        ? await api("/api/join", { method: "POST", body: JSON.stringify(joinBody) })
-        : await api("/api/circle/init", { method: "POST", body: JSON.stringify({ name: ($("#w-circle") || {}).value || "The Circle", ownerName: name.trim() }) });
-      localStorage.setItem("abba_token", data.token);
+      let data;
+      if (!hasCircle) {
+        data = await api("/api/circle/init", { method: "POST", body: JSON.stringify({ name: ($("#w-circle") || {}).value || "The Circle", ownerName: name.trim() }) });
+      } else if (wCode.toLowerCase().startsWith("usr-")) {
+        data = await api("/api/join", { method: "POST", body: JSON.stringify({ userId: wCode, name: name.trim() }) });
+      } else {
+        const look = await api("/api/invite/lookup?code=" + encodeURIComponent(wCode));
+        let circleId = null;
+        if (look.kind === "local") {
+          circleId = look.circle.id;
+        } else {
+          // a peered instance's code: pick which of your circles it opens
+          const pick = prompt("That code is honored mesh-wide. Which circle should it open?\n" +
+            look.circles.map((c, i) => (i + 1) + ". " + c.name).join("\n") + "\n\nEnter a number:");
+          const chosen = look.circles[Number(pick) - 1];
+          if (!chosen) { toast("Pick one of your circles."); return; }
+          circleId = chosen.id;
+        }
+        data = await api("/api/join", { method: "POST", body: JSON.stringify({ code: wCode, circleId, name: name.trim() }) });
+      }
+      rememberCircle(data.circle.id, data.token, data.circle.name);
       location.hash = "#/folders";
       await boot(true);
     } catch (e) { toast(e.message); }
@@ -1286,16 +1444,25 @@ function heartbeat(view) {
 
 /* ---------- boot & router ---------- */
 async function boot() {
-  const tok = localStorage.getItem("abba_token");
-  if (!tok) { viewWelcome(); return; }
+  await migrateLegacyToken();
+  const cid = activeCircleId();
+  if (!cid || !activeToken()) { viewWelcome(); return; }
   try {
     const [me, circle] = await Promise.all([
       api("/api/me").then(d => d.member),
       api("/api/circle"),
     ]);
     state.me = me; state.circle = circle;
+    // keep the stored circle name fresh
+    const s = circleStore();
+    if (s[cid]) { s[cid].name = circle.name; saveCircleStore(s); }
     route();
-  } catch (e) { localStorage.removeItem("abba_token"); viewWelcome(); }
+  } catch (e) {
+    // this circle's token is dead — forget it and try the next, else welcome
+    forgetCircle(cid);
+    if (activeCircleId() && activeToken()) { await boot(); return; }
+    viewWelcome();
+  }
 }
 function route() {
   const h = location.hash || "#/folders";

@@ -47,17 +47,23 @@ export function gidFor(m: MeshStore, db: Database, noteId: number): string {
   return gid;
 }
 
-/** A member row standing in for someone on a peered instance. Never logs in. */
-export function remoteMember(db: Database, nodeId: string, name: string, color: string): any {
-  const token = `mesh:${nodeId}:${name}`;
+/** A member row standing in for someone on a peered instance. Never logs in.
+    Scoped to a circle — the same remote person in two circles gets two rows. */
+export function remoteMember(db: Database, nodeId: string, name: string, color: string, circleId: number): any {
+  const token = `mesh:${nodeId}:${circleId}:${String(name).slice(0, 40)}`;
   let r = db.query("SELECT * FROM members WHERE token = ?").get(token) as any;
   if (!r) {
     const res = db.query(
-      "INSERT INTO members (name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, 'remote', ?, '')",
-    ).run(String(name).slice(0, 40) || "Someone", String(color || "#A08C5B"), token, nowIso());
+      "INSERT INTO members (circle_id, name, color, token, role, created_at, last_seen) VALUES (?, ?, ?, ?, 'remote', ?, '')",
+    ).run(circleId, String(name).slice(0, 40) || "Someone", String(color || "#A08C5B"), token, nowIso());
     r = db.query("SELECT * FROM members WHERE id = ?").get(Number(res.lastInsertRowid));
   }
   return r;
+}
+
+function circleMeshIdFor(db: Database, circleId: number): string | null {
+  const c = db.query("SELECT mesh_id FROM circle WHERE id = ?").get(circleId) as any;
+  return c?.mesh_id || null;
 }
 
 function noteRow(db: Database, noteId: number): any {
@@ -65,14 +71,16 @@ function noteRow(db: Database, noteId: number): any {
     JOIN members m ON m.id = n.member_id WHERE n.id = ?`).get(noteId) as any;
 }
 
-/** Publish a note snapshot — only if shared. Unshared/deleted -> retraction. */
+/** Publish a note snapshot — only if shared. Unshared/deleted -> retraction.
+    Carries the origin circle's stable mesh id so receivers can route it. */
 export function publishNote(m: MeshStore, db: Database, noteId: number): void {
   const n = noteRow(db, noteId);
   if (!n) return;
   const gid = gidFor(m, db, n.id);
   const key = `abba:note:${gid}`;
+  const circleMeshId = circleMeshIdFor(db, n.circle_id);
   if (!n.shared) {
-    m.putKv(key, JSON.stringify({ gid, shared: 0, retracted: true, updatedAt: n.updated_at, originNode: m.identity.id }));
+    m.putKv(key, JSON.stringify({ gid, shared: 0, retracted: true, updatedAt: n.updated_at, originNode: m.identity.id, circleMeshId }));
     return;
   }
   m.putKv(key, JSON.stringify({
@@ -80,6 +88,7 @@ export function publishNote(m: MeshStore, db: Database, noteId: number): void {
     status: n.status, shared: 1, readMins: n.read_mins,
     createdAt: n.created_at, updatedAt: n.updated_at,
     originNode: m.identity.id,
+    circleMeshId,
     author: { name: n.member_name, color: n.member_color },
   }));
 }
@@ -89,7 +98,10 @@ export function publishNoteTombstone(m: MeshStore, db: Database, noteId: number)
   const n = noteRow(db, noteId);
   if (!n || !n.shared) return;
   const gid = gidFor(m, db, n.id);
-  m.putKv(`abba:note:${gid}`, JSON.stringify({ gid, deleted: true, updatedAt: nowIso(), originNode: m.identity.id }));
+  m.putKv(`abba:note:${gid}`, JSON.stringify({
+    gid, deleted: true, updatedAt: nowIso(), originNode: m.identity.id,
+    circleMeshId: circleMeshIdFor(db, n.circle_id),
+  }));
 }
 
 export function publishReaction(m: MeshStore, db: Database, noteId: number, member: any, kind: string, on: boolean): void {
@@ -121,6 +133,9 @@ function applyNoteSnapshot(db: Database, m: MeshStore, row: any): boolean {
   if (snap.originNode === m.identity.id) return true; // own — already local
   const gid = String(snap.gid || "");
   if (!gid) return false;
+  // route to the paired local circle; unpaired snapshots wait for pairing
+  const circleId = routeToCircle(db, String(snap.originNode || ""), snap.circleMeshId || null);
+  if (!circleId) return false;
   const existing = db.query("SELECT * FROM notes WHERE gid = ?").get(gid) as any;
   if (existing && existing.link_origin) return true; // frozen migration link — never updated
   if (snap.deleted || snap.retracted || !snap.shared) {
@@ -128,16 +143,16 @@ function applyNoteSnapshot(db: Database, m: MeshStore, row: any): boolean {
     return true;
   }
   if (existing && existing.updated_at >= String(snap.updatedAt || "")) return true; // stale
-  const author = remoteMember(db, snap.originNode, snap.author?.name || "Someone", snap.author?.color);
+  const author = remoteMember(db, snap.originNode, snap.author?.name || "Someone", snap.author?.color, circleId);
   if (existing) {
     db.query(`UPDATE notes SET member_id = ?, title = ?, body = ?, tags = ?, status = ?,
       shared = 1, read_mins = ?, updated_at = ? WHERE id = ?`)
       .run(author.id, snap.title, snap.body, JSON.stringify(snap.tags || []),
         snap.status, snap.readMins || 1, snap.updatedAt, existing.id);
   } else {
-    db.query(`INSERT INTO notes (member_id, title, body, tags, status, shared, read_mins,
-      created_at, updated_at, gid) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`)
-      .run(author.id, snap.title, snap.body, JSON.stringify(snap.tags || []),
+    db.query(`INSERT INTO notes (circle_id, member_id, title, body, tags, status, shared, read_mins,
+      created_at, updated_at, gid) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`)
+      .run(circleId, author.id, snap.title, snap.body, JSON.stringify(snap.tags || []),
         snap.status, snap.readMins || 1, snap.createdAt, snap.updatedAt, gid);
   }
   return true;
@@ -149,9 +164,9 @@ function applyReaction(db: Database, m: MeshStore, row: any): boolean {
   const [originNode, localId, node, kind] = parts;
   if (node === m.identity.id) return true;
   const val = JSON.parse(row.v);
-  const note = db.query("SELECT id FROM notes WHERE gid = ?").get(originNode + ":" + localId) as any;
+  const note = db.query("SELECT id, circle_id FROM notes WHERE gid = ?").get(originNode + ":" + localId) as any;
   if (!note) return false; // snapshot hasn't arrived yet — retry next round
-  const by = remoteMember(db, node, val.by?.name || "Someone", val.by?.color);
+  const by = remoteMember(db, node, val.by?.name || "Someone", val.by?.color, note.circle_id);
   if (val.on) {
     db.query("INSERT OR IGNORE INTO reactions (note_id, member_id, kind, created_at) VALUES (?, ?, ?, ?)")
       .run(note.id, by.id, kind, new Date(val.ts || Date.now()).toISOString());
@@ -169,14 +184,91 @@ function applyComment(db: Database, m: MeshStore, row: any): boolean {
   if (cnode === m.identity.id) return true;
   const cgid = cnode + ":" + clocal;
   const val = JSON.parse(row.v);
-  const note = db.query("SELECT id FROM notes WHERE gid = ?").get(originNode + ":" + localId) as any;
+  const note = db.query("SELECT id, circle_id FROM notes WHERE gid = ?").get(originNode + ":" + localId) as any;
   if (!note) return false;
   const dup = db.query("SELECT 1 FROM comments WHERE remote_gid = ?").get(cgid);
   if (dup) return true;
-  const by = remoteMember(db, cnode, val.by?.name || "Someone", val.by?.color);
+  const by = remoteMember(db, cnode, val.by?.name || "Someone", val.by?.color, note.circle_id);
   db.query("INSERT INTO comments (note_id, member_id, body, created_at, remote_gid) VALUES (?, ?, ?, ?, ?)")
     .run(note.id, by.id, String(val.body || ""), val.createdAt || nowIso(), cgid);
   return true;
+}
+
+// ---- circle pairing ----------------------------------------------------------
+// A peer relationship links one local circle to one remote circle, matched by
+// the remote circle's stable mesh id. Snapshots route through this table.
+
+/** Route an incoming snapshot to a local circle. 0 = unpaired, retry later. */
+function routeToCircle(db: Database, peerNodeId: string, remoteMeshId: string | null): number {
+  if (remoteMeshId) {
+    const r = db.query(`SELECT local_circle_id FROM circle_peers WHERE peer_node_id = ? AND remote_mesh_id = ?`)
+      .get(peerNodeId, remoteMeshId) as any;
+    if (r) return r.local_circle_id;
+    return 0;
+  }
+  // legacy payload (pre-multi-circle peers): fall back to the first pairing
+  // created with this peer (the backfilled primary-circle one)
+  const r = db.query(`SELECT local_circle_id FROM circle_peers WHERE peer_node_id = ? ORDER BY rowid ASC LIMIT 1`).get(peerNodeId) as any;
+  return r ? r.local_circle_id : 0;
+}
+
+/** Record (or re-point) a pairing. remoteMeshId null = pending completion. */
+export function pairCircles(db: Database, localCircleId: number, peerNodeId: string, remoteMeshId: string | null): void {
+  db.query(`INSERT INTO circle_peers (local_circle_id, peer_node_id, remote_mesh_id, created_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(local_circle_id, peer_node_id) DO UPDATE SET remote_mesh_id = excluded.remote_mesh_id`)
+    .run(localCircleId, peerNodeId, remoteMeshId, nowIso());
+}
+
+export interface AdvertisedCircle {
+  nodeId: string; meshId: string; name: string;
+  code: string; expiresAt: string | null; createdAt: string;
+}
+
+/** Every circle invite advertised on the mesh, all nodes, all circles. */
+export function advertisedCircles(m: MeshStore): AdvertisedCircle[] {
+  const out: AdvertisedCircle[] = [];
+  for (const row of m.listKv()) {
+    if (!row.k.startsWith("abba:circle-invite:")) continue;
+    const parts = row.k.split(":");
+    const nodeId = parts[2], meshId = parts[3];
+    if (!nodeId || !meshId) continue;
+    try {
+      const v = JSON.parse(row.v);
+      if (v.deleted) continue;
+      out.push({
+        nodeId, meshId, name: v.circleName || "A circle",
+        code: v.code, expiresAt: v.expiresAt || null, createdAt: v.circleCreatedAt || "",
+      });
+    } catch { /* skip malformed */ }
+  }
+  return out;
+}
+
+/** Complete pending pairings once the peer's circles are visible in KV. */
+export function completePendingPairings(m: MeshStore, db: Database): void {
+  const pending = db.query("SELECT local_circle_id, peer_node_id FROM circle_peers WHERE remote_mesh_id IS NULL").all() as any[];
+  if (!pending.length) return;
+  const adv = advertisedCircles(m);
+  for (const p of pending) {
+    const circles = adv.filter((c) => c.nodeId === p.peer_node_id && c.nodeId !== m.identity.id);
+    if (!circles.length) continue;
+    circles.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+    db.query("UPDATE circle_peers SET remote_mesh_id = ? WHERE local_circle_id = ? AND peer_node_id = ?")
+      .run(circles[0].meshId, p.local_circle_id, p.peer_node_id);
+  }
+}
+
+/** Peers that predate the pairing table synced with the first circle — keep that. */
+export function backfillPairings(m: MeshStore, db: Database): void {
+  const first = db.query("SELECT id FROM circle ORDER BY id ASC LIMIT 1").get() as any;
+  if (!first) return;
+  for (const p of m.listPeers()) {
+    const has = db.query("SELECT 1 FROM circle_peers WHERE peer_node_id = ?").get(p.id);
+    if (!has) {
+      db.query("INSERT INTO circle_peers (local_circle_id, peer_node_id, remote_mesh_id, created_at) VALUES (?, ?, NULL, ?)")
+        .run(first.id, p.id, nowIso());
+    }
+  }
 }
 
 /** Pull one gossip round, then fold new mesh state into Abba. Idempotent. */
@@ -223,15 +315,17 @@ export async function meshTick(): Promise<void> {
   const m = getMesh();
   const db = getDb();
   try { await gossipRound(m); } catch (e) { console.error("[mesh] gossip:", (e as any)?.message); }
-  // a burned (or not-yet-created) circle serves sync but applies nothing
-  const circle = db.query("SELECT id FROM circle WHERE id = 1").get();
-  if (!circle) return;
+  // a burned (or not-yet-created) instance serves sync but applies nothing
+  const n = (db.query("SELECT COUNT(*) AS c FROM circle").get() as any).c;
+  if (!n) return;
+  try { backfillPairings(m, db); } catch (e) { console.error("[mesh] backfill:", (e as any)?.message); }
+  try { completePendingPairings(m, db); } catch (e) { console.error("[mesh] pair:", (e as any)?.message); }
   try {
-    const n = applyMeshUpdates(m, db);
-    if (n) console.log(`[mesh] applied ${n} update(s)`);
+    const applied = applyMeshUpdates(m, db);
+    if (applied) console.log(`[mesh] applied ${applied} update(s)`);
   } catch (e) { console.error("[mesh] apply:", (e as any)?.message); }
-  // keep our circle's invite code advertised mesh-wide (expiry included),
-  // so peered instances honor it — and learn when it lapses.
+  // keep every circle's invite code advertised mesh-wide (expiry included),
+  // so peered instances honor them — and learn when they lapse.
   try { publishCircleInvite(m, db); } catch (e) { console.error("[mesh] publish invite:", (e as any)?.message); }
 }
 
@@ -246,22 +340,33 @@ export function resetMeshNode(): void {
   m.identity = createIdentity(m.dataDir);
 }
 
-/** Publish this circle's invite code + expiry to the mesh so peered
-    instances honor it (codes are mesh-wide). Re-published every gossip
-    tick so expiry propagates without restarts. */
+/** Publish every circle's invite code + expiry to the mesh so peered
+    instances honor them (codes are mesh-wide). Re-published every gossip
+    tick so expiry propagates without restarts. One key per circle, keyed by
+    the circle's stable mesh id — codes rotate, the key doesn't. */
 export function publishCircleInvite(m: MeshStore, db: Database): void {
-  const circle = db.query("SELECT invite_code, invite_expires_at FROM circle WHERE id = 1").get() as any;
-  if (!circle?.invite_code) return;
-  m.putKv(`abba:circle-invite:${m.identity.id}`, JSON.stringify({
-    code: circle.invite_code, expiresAt: circle.invite_expires_at || null,
-    updatedAt: Date.now(), originNode: m.identity.id,
+  const circles = db.query("SELECT mesh_id, name, invite_code, invite_expires_at, created_at FROM circle").all() as any[];
+  for (const c of circles) {
+    if (!c.invite_code || !c.mesh_id) continue;
+    m.putKv(`abba:circle-invite:${m.identity.id}:${c.mesh_id}`, JSON.stringify({
+      code: c.invite_code, expiresAt: c.invite_expires_at || null,
+      circleName: c.name, meshCircleId: c.mesh_id, circleCreatedAt: c.created_at,
+      updatedAt: Date.now(), originNode: m.identity.id,
+    }));
+  }
+}
+
+/** Retract a deleted circle's advertisement so peers stop honoring its code. */
+export function unpublishCircleInvite(m: MeshStore, meshId: string): void {
+  m.putKv(`abba:circle-invite:${m.identity.id}:${meshId}`, JSON.stringify({
+    deleted: true, updatedAt: Date.now(), originNode: m.identity.id,
   }));
 }
 
 /** Find a currently-valid invite code advertised by a peered instance.
     KV rows were signature-verified at merge time; unknown peers are never
     stored. Returns null for unknown or expired codes. */
-export function findPeerInvite(m: MeshStore, code: string): { originNode: string; code: string; expiresAt: string | null } | null {
+export function findPeerInvite(m: MeshStore, code: string): { originNode: string; code: string; expiresAt: string | null; meshCircleId: string; circleName: string } | null {
   const want = String(code || "").trim().toLowerCase();
   if (!want) return null;
   const now = Date.now();
@@ -270,9 +375,11 @@ export function findPeerInvite(m: MeshStore, code: string): { originNode: string
     if (row.peer === m.identity.id) continue;
     let v: any;
     try { v = JSON.parse(row.v); } catch { continue; }
+    if (v.deleted) continue;
     if (String(v.code || "").toLowerCase() !== want) continue;
     if (v.expiresAt && Date.parse(v.expiresAt) <= now) continue; // lapsed
-    return { originNode: v.originNode || row.peer, code: v.code, expiresAt: v.expiresAt || null };
+    const meshId = row.k.split(":")[3] || v.meshCircleId || "";
+    return { originNode: v.originNode || row.peer, code: v.code, expiresAt: v.expiresAt || null, meshCircleId: meshId, circleName: v.circleName || "A circle" };
   }
   return null;
 }
@@ -280,11 +387,12 @@ export function findPeerInvite(m: MeshStore, code: string): { originNode: string
 /** Publish a member's credential snapshot so the account can be re-opened
     from the mesh with the secret. Call after a password is set. */
 export function publishMemberCredential(m: MeshStore, db: Database, memberId: number): void {
-  const mem = db.query("SELECT * FROM members WHERE id = ?").get(memberId) as any;
+  const mem = db.query("SELECT m.*, c.mesh_id AS circle_mesh_id FROM members m LEFT JOIN circle c ON c.id = m.circle_id WHERE m.id = ?").get(memberId) as any;
   if (!mem || !mem.password_hash || mem.role === "remote") return;
   m.putKv(`abba:member:${m.identity.id}:${mem.id}`, JSON.stringify({
     name: mem.name, color: mem.color, role: mem.role,
-    passwordHash: mem.password_hash, updatedAt: Date.now(), originNode: m.identity.id,
+    passwordHash: mem.password_hash, circleMeshId: mem.circle_mesh_id || null,
+    updatedAt: Date.now(), originNode: m.identity.id,
   }));
 }
 

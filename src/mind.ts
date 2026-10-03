@@ -93,22 +93,22 @@ function weekKey(d = new Date()): string {
 export function currentWeekKey(): string { return weekKey(); }
 
 /** Read a digest edition: cached if it exists, composed fresh for the current week, null otherwise. */
-export function getDigest(wk?: string): Digest | null {
+export function getDigest(wk: string | undefined, circleId: number): Digest | null {
   const db = getDb();
   const key = wk || weekKey();
-  const cached = db.query("SELECT payload FROM digests WHERE week_key = ?").get(key) as any;
+  const cached = db.query("SELECT payload FROM digests WHERE week_key = ? AND circle_id = ?").get(key, circleId) as any;
   if (cached) {
     const p = JSON.parse(cached.payload);
     return { weekKey: key, ...p };
   }
-  if (!wk || wk === weekKey()) return composeDigest();
+  if (!wk || wk === weekKey()) return composeDigest(circleId);
   return null;
 }
 
 /** Every cached edition, newest first — the Weekly Letters shelf. */
-export function listDigests(): { weekKey: string; createdAt: string; title: string }[] {
+export function listDigests(circleId: number): { weekKey: string; createdAt: string; title: string }[] {
   const db = getDb();
-  const rows = db.query("SELECT week_key, payload, created_at FROM digests ORDER BY week_key DESC").all() as any[];
+  const rows = db.query("SELECT week_key, payload, created_at FROM digests WHERE circle_id = ? ORDER BY week_key DESC").all(circleId) as any[];
   return rows.map((r) => ({ weekKey: r.week_key, createdAt: r.created_at, title: JSON.parse(r.payload).title || "Weekly letter" }));
 }
 
@@ -122,10 +122,10 @@ const OUTROS = [
   "Carry one of these into next week — that's plenty.",
 ];
 
-export function composeDigest(): Digest {
+export function composeDigest(circleId: number): Digest {
   const db = getDb();
   const wk = weekKey();
-  const cached = db.query("SELECT payload FROM digests WHERE week_key = ?").get(wk) as any;
+  const cached = db.query("SELECT payload FROM digests WHERE week_key = ? AND circle_id = ?").get(wk, circleId) as any;
   if (cached) {
     const p = JSON.parse(cached.payload);
     return { weekKey: wk, ...p };
@@ -137,20 +137,20 @@ export function composeDigest(): Digest {
   const notes = db.query(`
     SELECT n.*, m.name AS member_name FROM notes n
     JOIN members m ON m.id = n.member_id
-    WHERE n.shared = 1 AND n.created_at >= ? ORDER BY n.created_at DESC
-  `).all(sinceIso) as NoteRow[];
+    WHERE n.circle_id = ? AND n.shared = 1 AND n.created_at >= ? ORDER BY n.created_at DESC
+  `).all(circleId, sinceIso) as NoteRow[];
 
   const statusMoves = db.query(`
     SELECT e.*, n.title, m.name AS member_name FROM events e
     JOIN notes n ON n.id = e.note_id JOIN members m ON m.id = e.member_id
-    WHERE e.kind = 'status' AND e.created_at >= ? ORDER BY e.created_at DESC
-  `).all(sinceIso) as any[];
+    WHERE e.circle_id = ? AND e.kind = 'status' AND e.created_at >= ? ORDER BY e.created_at DESC
+  `).all(circleId, sinceIso) as any[];
 
   const commented = db.query(`
     SELECT DISTINCT n.id, n.title FROM comments c
     JOIN notes n ON n.id = c.note_id
-    WHERE c.created_at >= ? AND n.shared = 1 ORDER BY c.created_at DESC LIMIT 8
-  `).all(sinceIso) as any[];
+    WHERE n.circle_id = ? AND c.created_at >= ? AND n.shared = 1 ORDER BY c.created_at DESC LIMIT 8
+  `).all(circleId, sinceIso) as any[];
 
   const sections: DigestSection[] = [];
   const fresh = notes.filter((n) => n.status === "seed" || n.status === "sprout");
@@ -180,9 +180,9 @@ export function composeDigest(): Digest {
   // Quiet ones: shared ideas untouched for 14+ days (gentle, never shaming)
   const quiet = db.query(`
     SELECT n.*, m.name AS member_name FROM notes n JOIN members m ON m.id = n.member_id
-    WHERE n.shared = 1 AND n.status IN ('seed','sprout') AND n.updated_at < ?
+    WHERE n.circle_id = ? AND n.shared = 1 AND n.status IN ('seed','sprout') AND n.updated_at < ?
     ORDER BY n.updated_at ASC LIMIT 4
-  `).all(new Date(Date.now() - 14 * 864e5).toISOString()) as NoteRow[];
+  `).all(circleId, new Date(Date.now() - 14 * 864e5).toISOString()) as NoteRow[];
   if (quiet.length) {
     sections.push({
       heading: "Still simmering",
@@ -199,8 +199,8 @@ export function composeDigest(): Digest {
   };
   // Cache for the week; a "refresh" is just a re-read once new events land —
   // the digest is recomposed when the week turns over.
-  db.query("INSERT INTO digests (week_key, payload, created_at) VALUES (?, ?, ?)").run(
-    wk, JSON.stringify({ title: digest.title, intro: digest.intro, sections: digest.sections, empty: digest.empty }), nowIso());
+  db.query("INSERT INTO digests (circle_id, week_key, payload, created_at) VALUES (?, ?, ?, ?)").run(
+    circleId, wk, JSON.stringify({ title: digest.title, intro: digest.intro, sections: digest.sections, empty: digest.empty }), nowIso());
   return digest;
 }
 
@@ -210,7 +210,7 @@ export function composeDigest(): Digest {
 
 export interface Nudge { key: string; text: string; noteId?: number; action?: string }
 
-export function nudgesFor(memberId: number): Nudge[] {
+export function nudgesFor(memberId: number, circleId: number): Nudge[] {
   const db = getDb();
   const out: Nudge[] = [];
   const seen = new Set(
@@ -229,9 +229,9 @@ export function nudgesFor(memberId: number): Nudge[] {
   // Unread circle ideas (shared by others, never opened — tracked via events is overkill; use created recency)
   const unread = db.query(`
     SELECT id, title FROM notes
-    WHERE shared = 1 AND member_id != ? AND created_at > ?
+    WHERE circle_id = ? AND shared = 1 AND member_id != ? AND created_at > ?
     ORDER BY created_at DESC LIMIT 3
-  `).all(memberId, new Date(Date.now() - 3 * 864e5).toISOString()) as any[];
+  `).all(circleId, memberId, new Date(Date.now() - 3 * 864e5).toISOString()) as any[];
   if (unread.length >= 3 && !seen.has("unread-3")) {
     out.push({ key: "unread-3", text: `${unread.length} new ideas landed in the circle this week — worth a slow read.` });
   }
