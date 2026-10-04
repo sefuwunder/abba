@@ -61,6 +61,24 @@ function makeConn(): Conn {
   return c;
 }
 
+/** Socket handlers that feed the Conn's line buffer. Reused for STARTTLS upgrade. */
+function socketHandlers(c: Conn) {
+  return {
+    open(_sock: any) {},
+    data(_sock: any, data: Buffer) {
+      c.buf += data.toString("utf8");
+      const ws = c.waiters.splice(0);
+      for (const w of ws) w();
+    },
+    error(_sock: any, _err: Error) {
+      // wake pending readers; withTimeout surfaces the failure
+      const ws = c.waiters.splice(0);
+      for (const w of ws) w();
+    },
+    close() {},
+  };
+}
+
 /** Connect with handlers attached up front (Bun requires socket handlers in the options). */
 function openSocket(host: string, port: number, tls: boolean, c: Conn): Promise<Socket> {
   return new Promise<Socket>((resolve, reject) => {
@@ -68,25 +86,19 @@ function openSocket(host: string, port: number, tls: boolean, c: Conn): Promise<
     const timer = setTimeout(() => {
       if (!settled) { settled = true; reject(new SmtpError(504, "SMTP connect timed out")); }
     }, 15000);
-    Bun.connect({
-      hostname: host,
-      port,
-      tls,
-      socket: {
-        open(sock: any) {
-          if (!settled) { settled = true; clearTimeout(timer); c.socket = sock; resolve(sock); }
-        },
-        data(_sock: any, data: Buffer) {
-          c.buf += data.toString("utf8");
-          const ws = c.waiters.splice(0);
-          for (const w of ws) w();
-        },
-        error(_sock: any, err: Error) {
-          if (!settled) { settled = true; clearTimeout(timer); reject(new SmtpError(0, "SMTP connect failed: " + err.message)); }
-        },
-        close() { /* server hung up; pending reads reject via timeouts */ },
-      },
-    });
+    const handlers: any = socketHandlers(c);
+    // pre-connect errors reject the connect promise
+    const origError = handlers.error;
+    handlers.error = (_sock: any, err: Error) => {
+      if (!settled) { settled = true; clearTimeout(timer); reject(new SmtpError(0, "SMTP connect failed: " + err.message)); }
+      origError(_sock, err);
+    };
+    const origOpen = handlers.open;
+    handlers.open = (sock: any) => {
+      if (!settled) { settled = true; clearTimeout(timer); c.socket = sock; resolve(sock); }
+      origOpen(sock);
+    };
+    Bun.connect({ hostname: host, port, tls, socket: handlers });
   });
 }
 
@@ -133,11 +145,13 @@ async function dial(cfg: SmtpConfig, opts: { insecure?: boolean } = {}): Promise
     await withTimeout(c.cmd("EHLO abba"), 15000, "EHLO");
     if (!implicitTls && !opts.insecure) {
       await withTimeout(c.cmd("STARTTLS"), 15000, "STARTTLS");
-      await withTimeout(
-        (socket as any).upgradeTLS({ servername: cfg.host }),
-        15000,
-        "TLS upgrade",
-      );
+      // Bun's upgradeTLS upgrades in place; it needs the socket handlers and
+      // nested tls options. The TLS handshake runs async; the next EHLO is
+      // queued behind it.
+      (socket as any).upgradeTLS({
+        socket: socketHandlers(c),
+        tls: { serverName: cfg.host },
+      });
       await withTimeout(c.cmd("EHLO abba"), 15000, "EHLO");
     }
     return c;

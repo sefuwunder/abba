@@ -280,3 +280,44 @@ describe("scanSharedInbox", () => {
     expect((await scanSharedInbox({ insecure: true })).imported).toBe(0);
   });
 });
+
+describe("STARTTLS", () => {
+  test("upgradeTLS is called with a shape Bun accepts (no 'expected socket option')", async () => {
+    // Fake SMTP that does the plaintext handshake up to STARTTLS, then hangs
+    // (never completes the server-side TLS). The point: the client's
+    // upgradeTLS call must not throw "expected socket option" — the old bug.
+    // The handshake itself will time out; we assert the error is the timeout,
+    // proving we got past option parsing.
+    let sawStarttls = false;
+    const server = Bun.listen({
+      hostname: "127.0.0.1", port: 0,
+      socket: {
+        open(sock: any) { sock.write("220 fake\r\n"); sock.st = ""; },
+        data(sock: any, data: Buffer) {
+          let s: string = (sock.st += data.toString("utf8"));
+          let i: number;
+          while ((i = s.indexOf("\r\n")) >= 0) {
+            const line = s.slice(0, i); sock.st = s = s.slice(i + 2);
+            const v = line.split(" ")[0].toUpperCase();
+            if (v === "EHLO") sock.write("250-fake\r\n250-STARTTLS\r\n250 OK\r\n");
+            else if (v === "STARTTLS") { sawStarttls = true; sock.write("220 ready\r\n"); }
+          }
+        },
+        error() {}, close() {},
+      },
+    });
+    const port = (server as any).port;
+    const { sendMail } = await import("../src/smtp");
+    const err = await sendMail(
+      { host: "127.0.0.1", port, user: "u", pass: "p" },
+      ["a@b.c"], "s", "b", {},
+      {}, // NOT insecure: exercises the real STARTTLS path
+    ).then(() => null, (e: any) => e);
+    server.stop();
+    expect(sawStarttls).toBe(true);
+    expect(err).not.toBeNull();
+    // Old bug: "expected socket option" thrown synchronously by upgradeTLS.
+    // Now we must get past option parsing to the (hanging) handshake.
+    expect(String(err.message)).not.toMatch(/socket option/i);
+  }, 30000);
+});
