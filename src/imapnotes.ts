@@ -62,7 +62,7 @@ async function appendMessage(conn: Conn, tag: string, folder: string, raw: strin
     try {
       line = await conn.readLine(timeoutMs);
     } catch (e: any) {
-      throw timeoutContext(e, `waiting for APPEND result (${tag})`);
+      throw timeoutContext(e, `waiting for APPEND result (${tag}, ${bytes} bytes)`);
     }
     if (line.startsWith(`${tag} `)) {
       if (/^OK\b/i.test(line.slice(tag.length + 1))) return;
