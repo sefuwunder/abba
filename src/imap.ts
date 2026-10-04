@@ -248,8 +248,8 @@ export class Conn {
     }
   }
 
-  write(s: string) {
-    this.sock.write(s);
+  write(s: string | Buffer) {
+    this.sock.write(s as any);
   }
 
   /** Send one tagged command; return the response lines through the tagged OK. */

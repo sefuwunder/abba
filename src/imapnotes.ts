@@ -46,6 +46,9 @@ async function selectOrCreate(conn: Conn, folder: string) {
  * The result wait gets a longer timeout: it uploads user data and the server
  * indexes it, which on a slow path can take a while. Exported for tests. */
 export const APPEND_TIMEOUT_MS = 120000;
+/** Write the literal in small paced chunks: some middleboxes stall on a single
+ * large burst, while a trickle gets through. */
+const LITERAL_CHUNK = 1024;
 async function appendMessage(conn: Conn, tag: string, folder: string, raw: string, timeoutMs: number = APPEND_TIMEOUT_MS) {
   const bytes = Buffer.byteLength(raw, "utf8");
   conn.write(`${tag} APPEND ${qstr(folder)} {${bytes}}\r\n`);
@@ -56,7 +59,13 @@ async function appendMessage(conn: Conn, tag: string, folder: string, raw: strin
     throw timeoutContext(e, `waiting for APPEND continuation (${tag})`);
   }
   if (!cont.startsWith("+")) throw new ImapError(502, `mail server refused APPEND: ${cont.slice(0, 80)}`);
-  conn.write(raw);
+  // paced literal upload (see LITERAL_CHUNK): write raw bytes in slices so a
+  // multi-byte character is never split and the byte count stays exact.
+  const buf = Buffer.from(raw, "utf8");
+  for (let off = 0; off < buf.length; off += LITERAL_CHUNK) {
+    conn.write(buf.subarray(off, off + LITERAL_CHUNK));
+    if (off + LITERAL_CHUNK < buf.length) await new Promise((r) => setTimeout(r, 25));
+  }
   for (;;) {
     let line: string;
     try {

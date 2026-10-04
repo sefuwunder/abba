@@ -444,3 +444,24 @@ describe("appendResilient", () => {
     } finally { fake.stop(); }
   });
 });
+
+describe("appendMessage chunking", () => {
+  test("multi-byte characters survive paced chunked upload intact", async () => {
+    const fake = startFake([]);
+    try {
+      const cfg = { host: "127.0.0.1", port: fake.port, user: "sam", pass: "secret", folder: "Notes" };
+      const { conn } = await connectAndLogin({ ...cfg, secure: false });
+      // build a body with emoji straddling the 1024-byte chunk boundary
+      const pad = "x".repeat(1020);
+      const body = pad + "🎉🚀🌟" + "y".repeat(2000);
+      const raw = buildMessage({ id: 9, title: "emoji test 🎉", body, tags: [], status: "seed", updated_at: "2026-10-04T12:00:00.000Z" });
+      expect(Buffer.byteLength(raw, "utf8")).toBeGreaterThan(2048); // spans 3+ chunks
+      const r = await appendResilient(conn, "a020", cfg, "note-9", raw, true, 5000);
+      expect(r.pushed).toBe(true);
+      expect(fake.appends.length).toBe(1);
+      // the stored message must be byte-identical to what we built
+      expect(fake.appends[0]).toBe(raw);
+      r.conn.close();
+    } finally { fake.stop(); }
+  });
+});
