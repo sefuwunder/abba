@@ -397,9 +397,18 @@ async function viewList(kind) {
   if (scan) scan.onclick = async () => {
     scan.disabled = true;
     try {
-      const r = await api("/api/imap/scan", { method: "POST" });
-      toast(r.imported ? r.imported + " new shared note" + (r.imported === 1 ? "" : "s") + "." : "Nothing new.");
-      if (r.imported) viewList("shared");
+      await api("/api/imap/scan", { method: "POST" });
+      for (let i = 0; i < 150; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const cur = await api("/api/imap").catch(() => null);
+        if (!cur || !cur.syncRunning) {
+          const lr = cur && cur.lastScan;
+          const n = lr && typeof lr.imported === "number" ? lr.imported : 0;
+          toast(n ? n + " new shared note" + (n === 1 ? "" : "s") + "." : "Nothing new.");
+          if (n) viewList("shared");
+          break;
+        }
+      }
     } catch (e) { toast(e.message); }
     scan.disabled = false;
   };
@@ -871,8 +880,21 @@ async function renderMailCard() {
   if (sy) sy.onclick = async () => {
     sy.disabled = true;
     try {
-      const r = await api("/api/imap/sync", { method: "POST" });
-      toast(r.errors.length ? "Sync had trouble: " + r.errors[0] : `Synced — ${r.pushed} up, ${r.pulled} down.`);
+      const kick = await api("/api/imap/sync", { method: "POST" });
+      if (!kick.started) { toast("A sync is already running — watching it finish."); }
+      else toast("Sync started in the background…");
+      // The sync runs server-side (Gmail round-trips can outlast proxy
+      // timeouts); poll the account until it lands.
+      for (let i = 0; i < 150; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const cur = await api("/api/imap").catch(() => null);
+        if (!cur || !cur.syncRunning) {
+          const lr = cur && cur.lastSync;
+          if (lr) toast(lr.errors && lr.errors.length ? "Sync had trouble: " + lr.errors[0]
+            : `Synced — ${lr.pushed} up, ${lr.pulled} down, ${lr.deleted} removed.`);
+          break;
+        }
+      }
     } catch (e) { toast(e.message); }
     sy.disabled = false;
     renderMailCard();

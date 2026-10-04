@@ -20,23 +20,46 @@ initDataDir();
 // ---- IMAP sync ---------------------------------------------------------------
 // queueImapSync() debounces a sync ~20s after edits; a 10-minute interval
 // catches changes made from mail clients and picks up incoming shares.
+//
+// IMPORTANT: IMAP work never holds an HTTP request open. A full Gmail
+// round-trip is dozens of sequential APPEND/FETCH commands and can run
+// longer than proxy timeouts (Cloudflare ~100s) — the browser then reports
+// "Load failed" even though the sync is fine. runImapWork() runs everything
+// in the background; the client polls GET /api/imap for completion.
 let imapTimer: any = null;
+let imapWork: { kind: "sync" | "scan"; startedAt: string } | null = null;
+let lastSyncResult: { pushed: number; pulled: number; deleted: number; errors: string[] } | null = null;
+let lastScanResult: { imported: number } | null = null;
+
+function runImapWork(kind: "sync" | "scan", fn: () => Promise<any>): boolean {
+  if (imapWork) return false; // one at a time — the other trigger retries later
+  imapWork = { kind, startedAt: nowIso() };
+  fn().then(
+    (r) => {
+      if (kind === "sync") lastSyncResult = r as any;
+      else lastScanResult = r as any;
+      imapWork = null;
+    },
+    (e) => { console.error(`[imap] background ${kind} failed:`, (e as any)?.message); imapWork = null; },
+  );
+  return true;
+}
 function queueImapSync() {
   try {
     if (!getImapAccount()) return;
     if (imapTimer) clearTimeout(imapTimer);
     imapTimer = setTimeout(() => {
       imapTimer = null;
-      syncImapAccount().catch(() => {});
-      scanSharedInbox().catch(() => {});
+      runImapWork("sync", () => syncImapAccount());
+      runImapWork("scan", () => scanSharedInbox());
     }, 20000);
   } catch { /* db not ready */ }
 }
 setInterval(() => {
   try {
     if (!getImapAccount()) return;
-    syncImapAccount().catch(() => {});
-    scanSharedInbox().catch(() => {});
+    runImapWork("sync", () => syncImapAccount());
+    runImapWork("scan", () => scanSharedInbox());
   } catch { /* db not ready */ }
 }, 10 * 60 * 1000);
 
@@ -70,6 +93,8 @@ function imapJson(a: any): any {
     configured: true, host: a.host, port: a.port, username: a.username,
     folder: a.folder, smtpHost: a.smtp_host || "", smtpPort: a.smtp_port || 587,
     lastSyncAt: a.last_sync_at, lastError: a.last_error, lastShareScanAt: a.last_share_scan_at,
+    syncRunning: !!imapWork, syncKind: imapWork ? imapWork.kind : null,
+    lastSync: lastSyncResult, lastScan: lastScanResult,
   };
 }
 
@@ -301,16 +326,12 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true });
   }
   if (path === "/api/imap/sync" && req.method === "POST") {
-    const r = await syncImapAccount();
-    return json(r);
+    const started = runImapWork("sync", () => syncImapAccount());
+    return json({ ok: true, running: true, started });
   }
   if (path === "/api/imap/scan" && req.method === "POST") {
-    try {
-      const r = await scanSharedInbox();
-      return json(r);
-    } catch (e: any) {
-      return err("Scan failed: " + String((e && e.message) || e).slice(0, 160), 502);
-    }
+    const started = runImapWork("scan", () => scanSharedInbox());
+    return json({ ok: true, running: true, started });
   }
 
   // ---- backup: plain JSON export / import ----
