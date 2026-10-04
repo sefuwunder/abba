@@ -10,6 +10,7 @@ const PORT = 31313;
 const BASE = `http://localhost:${PORT}`;
 let proc: any;
 let noteId = 0;
+let testDir = "";
 
 async function api(path: string, opts: any = {}): Promise<{ status: number; data: any }> {
   const res = await fetch(BASE + path, {
@@ -24,6 +25,7 @@ const patch = (p: string, body: any) => api(p, { method: "PATCH", body: JSON.str
 
 beforeAll(async () => {
   const dir = mkdtempSync(join(tmpdir(), "abba-test-"));
+  testDir = dir;
   proc = Bun.spawn(["bun", "src/server.ts"], {
     cwd: join(import.meta.dir, ".."),
     env: { ...process.env, ABBA_DATA: dir, ABBA_PORT: String(PORT) },
@@ -202,6 +204,36 @@ describe("imap config", () => {
     const text = await res.text();
     expect(text.includes("__V__")).toBe(false);
     expect(/abba-shell-\d+/.test(text)).toBe(true);
+  });
+});
+
+describe("imap background failures are never silent", () => {
+  test("a sync that cannot reach the server surfaces errors, not silence", async () => {
+    // bypass PUT validation (it test-connects): write an unreachable
+    // account straight into sqlite, like a config whose server went away
+    const { Database } = await import("bun:sqlite");
+    const db = new Database(join(testDir, "abba.db"));
+    db.query(`INSERT OR REPLACE INTO imap_account
+      (id, host, port, username, password, folder, smtp_host, smtp_port, last_sync_at, last_error, last_share_scan_at, updated_at)
+      VALUES (1, '127.0.0.1', 1, 'u', 'p', 'Notes', '', 587, '', '', '', ?)`)
+      .run(new Date().toISOString());
+    db.close();
+    const kick = await post("/api/imap/sync", {});
+    expect(kick.data.started).toBe(true);
+    let cur: any = null;
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      cur = (await api("/api/imap")).data;
+      if (!cur.syncRunning) break;
+    }
+    expect(cur.syncRunning).toBe(false);
+    // the failure must be visible: result errors + the red last-error line
+    expect(cur.lastSync.errors.length).toBeGreaterThan(0);
+    expect(cur.lastError).toBeTruthy();
+    expect(cur.lastSyncAt).toBeFalsy(); // still never synced
+    // and the worker must be free for the next attempt
+    const kick2 = await post("/api/imap/sync", {});
+    expect(kick2.data.started).toBe(true);
   });
 });
 

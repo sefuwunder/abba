@@ -885,16 +885,21 @@ async function renderMailCard() {
       else toast("Sync started in the background…");
       // The sync runs server-side (Gmail round-trips can outlast proxy
       // timeouts); poll the account until it lands.
+      let landed = false;
       for (let i = 0; i < 150; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const cur = await api("/api/imap").catch(() => null);
         if (!cur || !cur.syncRunning) {
+          landed = true;
           const lr = cur && cur.lastSync;
           if (lr) toast(lr.errors && lr.errors.length ? "Sync had trouble: " + lr.errors[0]
             : `Synced — ${lr.pushed} up, ${lr.pulled} down, ${lr.deleted} removed.`);
+          else if (cur && cur.lastError) toast("Sync had trouble: " + cur.lastError);
+          else if (cur) toast("Sync didn't report back — try again.");
           break;
         }
       }
+      if (!landed) toast("Sync is taking a while — check Settings in a bit.");
     } catch (e) { toast(e.message); }
     sy.disabled = false;
     renderMailCard();

@@ -15,10 +15,12 @@ import { sendMail, SmtpError } from "./smtp.ts";
 export interface ImapAccountRow {
   host: string; port: number; username: string; password: string; folder: string;
   smtp_host: string; smtp_port: number;
+  last_sync_at?: string; last_error?: string; last_share_scan_at?: string;
 }
 
 export function getImapAccount(): ImapAccountRow | null {
-  return getDb().query(`SELECT host, port, username, password, folder, smtp_host, smtp_port
+  return getDb().query(`SELECT host, port, username, password, folder, smtp_host, smtp_port,
+    last_sync_at, last_error, last_share_scan_at
     FROM imap_account WHERE id = 1`).get() as any || null;
 }
 

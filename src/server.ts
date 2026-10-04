@@ -40,9 +40,24 @@ function runImapWork(kind: "sync" | "scan", fn: () => Promise<any>): boolean {
       else lastScanResult = r as any;
       imapWork = null;
     },
-    (e) => { console.error(`[imap] background ${kind} failed:`, (e as any)?.message); imapWork = null; },
+    (e) => noteImapFailure(kind, e),
   );
   return true;
+}
+/**
+ * A background IMAP job died before it could report back (thrown outside the
+ * job's own error handling). Previously this only reached the server console,
+ * so the client polled, saw nothing, and went silent while Settings kept
+ * saying "Not synced yet". Record it where the user can see it instead.
+ * Exported for tests.
+ */
+export function noteImapFailure(kind: "sync" | "scan", e: any): void {
+  const msg = String((e && (e as any).message) || e).slice(0, 200);
+  console.error(`[imap] background ${kind} failed:`, msg);
+  try { getDb().query("UPDATE imap_account SET last_error = ? WHERE id = 1").run(msg); } catch { /* db gone */ }
+  if (kind === "sync") lastSyncResult = { pushed: 0, pulled: 0, deleted: 0, errors: [msg] };
+  else lastScanResult = { imported: 0, error: msg } as any;
+  imapWork = null;
 }
 function queueImapSync() {
   try {
