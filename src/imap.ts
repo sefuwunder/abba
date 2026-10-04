@@ -17,6 +17,17 @@ export class ImapError extends Error {
   }
 }
 
+/**
+ * Re-throw a read timeout naming what we were waiting for, so "Last error"
+ * pinpoints the stall (greeting? LOGIN? FETCH?) instead of a bare timeout.
+ */
+export function timeoutContext(e: any, waitingFor: string): any {
+  if (e instanceof ImapError && e.status === 0 && /timed out/i.test(e.message)) {
+    return new ImapError(0, `mail server timed out ${waitingFor}`);
+  }
+  return e;
+}
+
 export interface ImapConfig {
   host: string;
   port?: number; // default 993
@@ -241,7 +252,12 @@ export class Conn {
     this.write(`${tag} ${command}\r\n`);
     const out: string[] = [];
     for (;;) {
-      const line = await this.readLine();
+      let line: string;
+      try {
+        line = await this.readLine();
+      } catch (e: any) {
+        throw timeoutContext(e, `waiting for a reply to ${command.split(/\s+/)[0] || "command"} (${tag})`);
+      }
       if (line.startsWith(`${tag} `)) {
         const rest = line.slice(tag.length + 1);
         if (/^OK\b/i.test(rest)) return out;
@@ -279,7 +295,12 @@ export async function connectAndLogin(cfg0: ImapConfig): Promise<{ conn: Conn; c
   const cfg = cfgOk(cfg0);
   const conn = new Conn();
   await conn.open(cfg.host, cfg.port!, cfg.secure!);
-  const greet = await conn.readLine();
+  let greet: string;
+  try {
+    greet = await conn.readLine();
+  } catch (e: any) {
+    throw timeoutContext(e, "waiting for the server greeting");
+  }
   if (!/^\* OK/i.test(greet)) {
     conn.close();
     throw new ImapError(502, `mail server did not greet properly: ${greet.slice(0, 80)}`);

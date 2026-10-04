@@ -11,7 +11,7 @@
 // Abba's copy of relay/src/imap.ts). This file only adds the notes-sync
 // semantics on top of its Conn.
 import { getDb, nowIso } from "./db.ts";
-import { Conn, ImapError, connectAndLogin, qstr, decodeHeader } from "./imap.ts";
+import { Conn, ImapError, connectAndLogin, qstr, decodeHeader, timeoutContext } from "./imap.ts";
 
 export { decodeHeader } from "./imap.ts";
 export { ImapError } from "./imap.ts";
@@ -46,11 +46,21 @@ async function selectOrCreate(conn: Conn, folder: string) {
 async function appendMessage(conn: Conn, tag: string, folder: string, raw: string) {
   const bytes = Buffer.byteLength(raw, "utf8");
   conn.write(`${tag} APPEND ${qstr(folder)} {${bytes}}\r\n`);
-  const cont = await conn.readLine();
+  let cont: string;
+  try {
+    cont = await conn.readLine();
+  } catch (e: any) {
+    throw timeoutContext(e, `waiting for APPEND continuation (${tag})`);
+  }
   if (!cont.startsWith("+")) throw new ImapError(502, `mail server refused APPEND: ${cont.slice(0, 80)}`);
   conn.write(raw);
   for (;;) {
-    const line = await conn.readLine();
+    let line: string;
+    try {
+      line = await conn.readLine();
+    } catch (e: any) {
+      throw timeoutContext(e, `waiting for APPEND result (${tag})`);
+    }
     if (line.startsWith(`${tag} `)) {
       if (/^OK\b/i.test(line.slice(tag.length + 1))) return;
       throw new ImapError(502, `APPEND failed: ${line.slice(0, 120)}`);

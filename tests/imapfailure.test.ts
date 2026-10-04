@@ -3,6 +3,7 @@
 import { describe, test, expect, beforeAll } from "bun:test";
 import { Database } from "bun:sqlite";
 import { __resetForTests, noteImapFailure } from "../src/server";
+import { ImapError, timeoutContext } from "../src/imap";
 
 let db: Database;
 beforeAll(() => {
@@ -30,5 +31,18 @@ describe("noteImapFailure", () => {
     expect(() => noteImapFailure("sync", undefined)).not.toThrow();
     const row = db.query("SELECT last_error FROM imap_account WHERE id = 1").get() as any;
     expect(typeof row.last_error).toBe("string");
+  });
+});
+
+describe("timeoutContext", () => {
+  test("a read timeout names what was being waited for", () => {
+    const e = timeoutContext(new ImapError(0, "mail server timed out waiting for a reply"), "waiting for a reply to LOGIN (a001)");
+    expect(e.message).toBe("mail server timed out waiting for a reply to LOGIN (a001)");
+  });
+  test("non-timeout errors pass through untouched", () => {
+    const refused = new ImapError(502, "mail server refused: AUTHENTICATIONFAILED");
+    expect(timeoutContext(refused, "waiting for X")).toBe(refused);
+    const boom = new Error("boom");
+    expect(timeoutContext(boom, "waiting for X")).toBe(boom);
   });
 });
