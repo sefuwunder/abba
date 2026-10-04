@@ -64,6 +64,15 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ---- helpers -----------------------------------------------------------------
+function assetVersion(): number {
+  const dir = `${import.meta.dir}/../public`;
+  let v = 0;
+  for (const f of ["app.js", "styles.css", "index.html", "sw.js", "manifest.webmanifest",
+                   "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]) {
+    try { v = Math.max(v, Bun.file(`${dir}/${f}`).lastModified); } catch { /* ignore */ }
+  }
+  return Math.floor(v / 1000);
+}
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -106,17 +115,15 @@ async function handle(req: Request): Promise<Response> {
 
   // static — index.html gets a cache-busting version so clients never run stale JS
   if (req.method === "GET" && (path === "/" || path === "/index.html")) {
-    const dir = `${import.meta.dir}/../public`;
-    let v = 0;
-    for (const f of ["app.js", "styles.css", "index.html", "sw.js", "manifest.webmanifest",
-                     "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]) {
-      try { v = Math.max(v, Bun.file(`${dir}/${f}`).lastModified); } catch { /* ignore */ }
-    }
-    const html = (await Bun.file(`${dir}/index.html`).text()).replaceAll("__V__", String(Math.floor(v / 1000)));
+    const html = (await Bun.file(`${import.meta.dir}/../public/index.html`).text()).replaceAll("__V__", String(assetVersion()));
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   }
   if (req.method === "GET" && path === "/sw.js") {
-    return new Response(await Bun.file(`${import.meta.dir}/../public/sw.js`).text(), { headers: { "Content-Type": "application/javascript" } });
+    // The SW cache name MUST be version-stamped: an unchanging name plus
+    // ignoreSearch:true in the fetch handler pins clients to the first
+    // cached app.js forever, so a deploy never reaches them.
+    const sw = (await Bun.file(`${import.meta.dir}/../public/sw.js`).text()).replaceAll("__V__", String(assetVersion()));
+    return new Response(sw, { headers: { "Content-Type": "application/javascript" } });
   }
   if (req.method === "GET" && path === "/manifest.webmanifest")
     return new Response(await Bun.file(`${import.meta.dir}/../public/manifest.webmanifest`).text(), { headers: { "Content-Type": "application/manifest+json" } });
@@ -327,11 +334,13 @@ async function handle(req: Request): Promise<Response> {
   }
   if (path === "/api/imap/sync" && req.method === "POST") {
     const started = runImapWork("sync", () => syncImapAccount());
-    return json({ ok: true, running: true, started });
+    // errors/pushed/pulled/deleted keep the pre-background SyncResult shape
+    // so a stale cached client doing r.errors.length can't throw.
+    return json({ ok: true, running: true, started, errors: [], pushed: 0, pulled: 0, deleted: 0, ...(lastSyncResult || {}) });
   }
   if (path === "/api/imap/scan" && req.method === "POST") {
     const started = runImapWork("scan", () => scanSharedInbox());
-    return json({ ok: true, running: true, started });
+    return json({ ok: true, running: true, started, imported: lastScanResult ? lastScanResult.imported : 0 });
   }
 
   // ---- backup: plain JSON export / import ----

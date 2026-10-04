@@ -181,6 +181,28 @@ describe("imap config", () => {
     const { status } = await api("/api/imap", { method: "DELETE" });
     expect(status).toBe(200);
   });
+  test("sync kick returns instantly with a backward-compatible shape", async () => {
+    const t0 = Date.now();
+    const { status, data } = await post("/api/imap/sync", {});
+    expect(status).toBe(200);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(data.ok).toBe(true);
+    // stale cached clients do r.errors.length — this must never throw
+    expect(Array.isArray(data.errors)).toBe(true);
+    expect(typeof data.pushed).toBe("number");
+  });
+  test("scan kick returns instantly with a backward-compatible shape", async () => {
+    const { status, data } = await post("/api/imap/scan", {});
+    expect(status).toBe(200);
+    expect(data.ok).toBe(true);
+    expect(typeof data.imported).toBe("number");
+  });
+  test("service worker cache name is version-stamped", async () => {
+    const res = await fetch(BASE + "/sw.js");
+    const text = await res.text();
+    expect(text.includes("__V__")).toBe(false);
+    expect(/abba-shell-\d+/.test(text)).toBe(true);
+  });
 });
 
 describe("backup", () => {
