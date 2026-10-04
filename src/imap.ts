@@ -22,10 +22,15 @@ export class ImapError extends Error {
  * pinpoints the stall (greeting? LOGIN? FETCH?) instead of a bare timeout.
  */
 export function timeoutContext(e: any, waitingFor: string): any {
-  if (e instanceof ImapError && e.status === 0 && /timed out/i.test(e.message)) {
+  if (isTimeoutError(e)) {
     return new ImapError(0, `mail server timed out ${waitingFor}`);
   }
   return e;
+}
+
+/** True when e is our own read-timeout (status 0), as opposed to a refusal. */
+export function isTimeoutError(e: any): boolean {
+  return e instanceof ImapError && e.status === 0 && /timed out/i.test(e.message);
 }
 
 export interface ImapConfig {
@@ -229,7 +234,7 @@ export class Conn {
     if (this.wake) { const w = this.wake; this.wake = null; w(); }
   }
 
-  async readLine(): Promise<string> {
+  async readLine(timeoutMs: number = READ_TIMEOUT_MS): Promise<string> {
     for (;;) {
       if (this.lines.length) return this.lines.shift()!;
       if (this.closedErr) throw new ImapError(0, this.closedErr.message);
@@ -237,7 +242,7 @@ export class Conn {
         const timer = setTimeout(() => {
           this.wake = null;
           reject(new ImapError(0, "mail server timed out waiting for a reply"));
-        }, READ_TIMEOUT_MS);
+        }, timeoutMs);
         this.wake = () => { clearTimeout(timer); resolve(); };
       });
     }
@@ -248,13 +253,13 @@ export class Conn {
   }
 
   /** Send one tagged command; return the response lines through the tagged OK. */
-  async cmd(tag: string, command: string): Promise<string[]> {
+  async cmd(tag: string, command: string, timeoutMs: number = READ_TIMEOUT_MS): Promise<string[]> {
     this.write(`${tag} ${command}\r\n`);
     const out: string[] = [];
     for (;;) {
       let line: string;
       try {
-        line = await this.readLine();
+        line = await this.readLine(timeoutMs);
       } catch (e: any) {
         throw timeoutContext(e, `waiting for a reply to ${command.split(/\s+/)[0] || "command"} (${tag})`);
       }
@@ -337,7 +342,7 @@ export async function validateImap(cfg: ImapConfig): Promise<{ ok: true }> {
   return { ok: true };
 }
 
-function parseSearchUids(lines: string[]): string[] {
+export function parseSearchUids(lines: string[]): string[] {
   const out: string[] = [];
   for (const line of lines) {
     const m = line.match(/^\* SEARCH\s*(.*)$/i);

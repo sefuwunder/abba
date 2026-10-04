@@ -11,7 +11,7 @@
 // Abba's copy of relay/src/imap.ts). This file only adds the notes-sync
 // semantics on top of its Conn.
 import { getDb, nowIso } from "./db.ts";
-import { Conn, ImapError, connectAndLogin, qstr, decodeHeader, timeoutContext } from "./imap.ts";
+import { Conn, ImapError, connectAndLogin, qstr, decodeHeader, timeoutContext, isTimeoutError, parseSearchUids } from "./imap.ts";
 
 export { decodeHeader } from "./imap.ts";
 export { ImapError } from "./imap.ts";
@@ -42,8 +42,11 @@ async function selectOrCreate(conn: Conn, folder: string) {
   }
 }
 
-/** APPEND with a literal body: wait for the "+" continuation first. */
-async function appendMessage(conn: Conn, tag: string, folder: string, raw: string) {
+/** APPEND with a literal body: wait for the "+" continuation first.
+ * The result wait gets a longer timeout: it uploads user data and the server
+ * indexes it, which on a slow path can take a while. Exported for tests. */
+export const APPEND_TIMEOUT_MS = 120000;
+async function appendMessage(conn: Conn, tag: string, folder: string, raw: string, timeoutMs: number = APPEND_TIMEOUT_MS) {
   const bytes = Buffer.byteLength(raw, "utf8");
   conn.write(`${tag} APPEND ${qstr(folder)} {${bytes}}\r\n`);
   let cont: string;
@@ -57,7 +60,7 @@ async function appendMessage(conn: Conn, tag: string, folder: string, raw: strin
   for (;;) {
     let line: string;
     try {
-      line = await conn.readLine();
+      line = await conn.readLine(timeoutMs);
     } catch (e: any) {
       throw timeoutContext(e, `waiting for APPEND result (${tag})`);
     }
@@ -65,6 +68,44 @@ async function appendMessage(conn: Conn, tag: string, folder: string, raw: strin
       if (/^OK\b/i.test(line.slice(tag.length + 1))) return;
       throw new ImapError(502, `APPEND failed: ${line.slice(0, 120)}`);
     }
+  }
+}
+
+/**
+ * APPEND that survives a stalled upload. A timed-out APPEND leaves the
+ * connection in an unknown state — the server may still be waiting for
+ * literal bytes, so sending another command on it would desync the session.
+ * Reconnect cleanly, then check by X-Abba-Id whether the message actually
+ * landed (the reply may simply have been lost) and only retry when it didn't.
+ * Returns the connection to keep using (possibly a fresh one).
+ * Exported for tests.
+ */
+export async function appendResilient(conn: Conn, tag: string, cfg: ImapAccount, abbaId: string, raw: string, insecure = false, timeoutMs: number = APPEND_TIMEOUT_MS): Promise<{ conn: Conn; pushed: boolean }> {
+  try {
+    await appendMessage(conn, tag, cfg.folder, raw, timeoutMs);
+    return { conn, pushed: true };
+  } catch (e: any) {
+    if (!isTimeoutError(e)) throw e;
+  }
+  try { conn.close(); } catch { /* already gone */ }
+  const fresh = await connectAndLogin(toCfg(cfg, insecure));
+  const c2 = fresh.conn;
+  try {
+    await selectOrCreate(c2, cfg.folder);
+    let landed: boolean;
+    try {
+      const lines = await c2.cmd(tag + "s", `UID SEARCH HEADER ${qstr("X-Abba-Id")} ${qstr(abbaId)}`, 60000);
+      landed = parseSearchUids(lines).length > 0;
+    } catch {
+      // Can't verify whether it landed: don't risk a duplicate. The next
+      // sync will push it if it's missing (matched by X-Abba-Id).
+      return { conn: c2, pushed: false };
+    }
+    if (!landed) await appendMessage(c2, tag + "r", cfg.folder, raw, timeoutMs);
+    return { conn: c2, pushed: true };
+  } catch (e2: any) {
+    try { c2.close(); } catch { /* already gone */ }
+    throw e2;
   }
 }
 
@@ -233,8 +274,9 @@ function readMins(body: string): number {
 
 /** Two-way sync of the notepad with the Notes folder. Never throws —
  *  errors land in the result. `opts.insecure` talks plain TCP and exists
- *  for the local test fake only. */
-export async function syncImapAccount(opts: { insecure?: boolean } = {}): Promise<SyncResult> {
+ *  for the local test fake only. `opts.appendTimeoutMs` overrides the APPEND
+ *  result timeout (tests). */
+export async function syncImapAccount(opts: { insecure?: boolean; appendTimeoutMs?: number } = {}): Promise<SyncResult> {
   const db = getDb();
   const result: SyncResult = { pushed: 0, pulled: 0, deleted: 0, errors: [] };
   const acct = db.query("SELECT * FROM imap_account WHERE id = 1").get() as any;
@@ -243,13 +285,14 @@ export async function syncImapAccount(opts: { insecure?: boolean } = {}): Promis
     host: acct.host, port: acct.port || 993,
     user: acct.username, pass: acct.password, folder: acct.folder || "Notes",
   };
-  const { conn } = await connectAndLogin(toCfg(cfg, !!opts.insecure)).catch((e: any) => {
+  const { conn: firstConn } = await connectAndLogin(toCfg(cfg, !!opts.insecure)).catch((e: any) => {
     const msg = String((e && e.message) || e).slice(0, 200);
     try { db.query("UPDATE imap_account SET last_error = ? WHERE id = 1").run(msg); } catch { /* db gone */ }
     result.errors.push(msg);
     return { conn: null as Conn | null };
   });
-  if (!conn) return result;
+  if (!firstConn) return result;
+  let conn: Conn = firstConn;
   try {
     await selectOrCreate(conn, cfg.folder);
     const remote = await listMessages(conn);
@@ -265,16 +308,18 @@ export async function syncImapAccount(opts: { insecure?: boolean } = {}): Promis
       const m = byAbbaId.get(abbaId);
       const tags = JSON.parse(n.tags || "[]");
       if (!m) {
-        await appendMessage(conn, "a020", cfg.folder, buildMessage({ ...n, tags }));
-        result.pushed++;
+        const pa = await appendResilient(conn, "a020", cfg, abbaId, buildMessage({ ...n, tags }), !!opts.insecure, opts.appendTimeoutMs);
+        conn = pa.conn;
+        if (pa.pushed) result.pushed++;
         continue;
       }
       matchedUids.add(m.uid);
       const noteMs = Date.parse(n.updated_at) || 0;
       if (noteMs - m.dateMs > 2000) {
         await conn.cmd("a021", `UID STORE ${m.uid} +FLAGS (\\Deleted)`);
-        await appendMessage(conn, "a022", cfg.folder, buildMessage({ ...n, tags }));
-        result.pushed++;
+        const pb = await appendResilient(conn, "a022", cfg, abbaId, buildMessage({ ...n, tags }), !!opts.insecure, opts.appendTimeoutMs);
+        conn = pb.conn;
+        if (pb.pushed) result.pushed++;
       } else if (m.dateMs - noteMs > 2000) {
         const p = parseMessage(await fetchRaw(conn, m.uid));
         if (!p.body && !p.subject) continue;
@@ -298,11 +343,12 @@ export async function syncImapAccount(opts: { insecure?: boolean } = {}): Promis
           STATUSES.includes(p.status as any) ? p.status : "seed", readMins(p.body), t, t);
       const newId = Number(r.lastInsertRowid);
       await conn.cmd("a023", `UID STORE ${m.uid} +FLAGS (\\Deleted)`);
-      await appendMessage(conn, "a024", cfg.folder, buildMessage({
+      const pc = await appendResilient(conn, "a024", cfg, "note-" + newId, buildMessage({
         id: newId, title: p.subject || "Untitled", body: p.body, tags: p.tags,
         status: STATUSES.includes(p.status as any) ? p.status : "seed", updated_at: t,
-      }));
-      result.pulled++;
+      }), !!opts.insecure, opts.appendTimeoutMs);
+      conn = pc.conn;
+      if (pc.pushed) result.pulled++;
     }
 
     // notes deleted in Abba: drop their messages
