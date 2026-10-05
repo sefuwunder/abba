@@ -1,6 +1,6 @@
 /* Abba client — a quiet single-user notepad, modeled after Apple Notes:
    folders, lists, large titles, hairlines, quiet gold. No sign-in (access is
-   gated one layer up, by Deck). Sharing is email through IMAP. */
+   gated one layer up, by Deck). No communications — nothing leaves this device. */
 "use strict";
 const $ = (s, el) => (el || document).querySelector(s);
 const app = $("#app"), tabbar = $("#tabbar"), toastEl = $("#toast");
@@ -244,16 +244,12 @@ function folderSvg(kind) {
   if (kind === "letters") {
     return '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2.5" fill="#E3B23C"/><path d="M3.5 7.5 12 13.5l8.5-6" stroke="#B9862A" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
-  if (kind === "shared") {
-    return '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M12 3v10m0-10L7.5 7.5M12 3l4.5 4.5" stroke="#8C6A2F" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 12v7a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7" stroke="#8C6A2F" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
-  }
-  return '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M2.5 6.5a2 2 0 0 1 2-2h5l2 2.4h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z" fill="#EBCB5E"/><path d="M2.5 9.5h19V18a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z" fill="#E3B23C"/></svg>';
+  return '<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M2.5 6.5a2 2 0 0 1 2-2h5l2 2.4h8a2 2 0 0 1 2 2V18a2 2 0 0 1 2-2V18a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z" fill="#EBCB5E"/><path d="M2.5 9.5h19V18a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z" fill="#E3B23C"/></svg>';
 }
 
 /* ---------- shell ---------- */
 const TABS = [
   ["#/folders", "✎", "Notes", "notes"],
-  ["#/list/shared", "📥", "Shared", "shared"],
   ["#/settings", "⚙", "Settings", "settings"],
 ];
 function renderTabs(active) {
@@ -282,10 +278,9 @@ function bindNudges(root) {
 /* ---------- folders (home) ---------- */
 async function viewFolders() {
   renderTabs("notes");
-  const [nudges, notes, shared, letters] = await Promise.all([
+  const [nudges, notes, letters] = await Promise.all([
     api("/api/nudges").then(d => d.nudges).catch(() => []),
     api("/api/notes").then(d => d.notes).catch(() => []),
-    api("/api/shared").then(d => d.shared).catch(() => []),
     api("/api/digests").then(d => d.digests).catch(() => []),
   ]);
   const topics = topicFolders(notes);
@@ -296,8 +291,6 @@ async function viewFolders() {
     <div class="group">
       <div class="frow" data-go="#/list/notes">${folderSvg("folder")}
         <span class="frow-name">Notepad</span><span class="frow-count">${notes.length}</span><span class="chev">›</span></div>
-      <div class="frow" data-go="#/list/shared">${folderSvg("shared")}
-        <span class="frow-name">Shared with me</span><span class="frow-count">${shared.length}</span><span class="chev">›</span></div>
       <div class="frow" data-go="#/list/letters">${folderSvg("letters")}
         <span class="frow-name">Weekly Letters</span><span class="frow-count">${letters.length}</span><span class="chev">›</span></div>
     </div>
@@ -308,7 +301,7 @@ async function viewFolders() {
       <div class="frow" data-go="#/list/topic/${encodeURIComponent(t.tag)}"><span class="frow-ic">◈</span>
         <span class="frow-name">${esc(capTag(t.tag))}</span><span class="frow-count">${t.notes.length}</span><span class="chev">›</span></div>`).join("")}
     </div>` : ""}
-    <p class="foot-note">A quiet notepad. Sharing is email — nothing else leaves this device.</p>`;
+    <p class="foot-note">A quiet notepad. Nothing leaves this device.</p>`;
   bindNudges(app);
   app.querySelectorAll("[data-go]").forEach(r => r.onclick = () => location.hash = r.dataset.go);
 }
@@ -316,20 +309,16 @@ async function viewFolders() {
 /* ---------- lists ---------- */
 const FOLDER_META = {
   notes: { title: "Notepad", back: "Folders", compose: true },
-  shared: { title: "Shared with me", back: "Folders", compose: false },
   letters: { title: "Weekly Letters", back: "Folders", compose: false },
 };
 async function viewList(kind) {
-  renderTabs(kind === "shared" ? "shared" : "notes");
+  renderTabs("notes");
   const meta = FOLDER_META[kind] || FOLDER_META.notes;
   let items = [];
   if (kind === "letters") {
     const { digests } = await api("/api/digests").catch(() => ({ digests: [] }));
     items = [{ kind: "today" }];
     items.push(...digests.map(d => ({ kind: "letter", id: d.weekKey, weekKey: d.weekKey })));
-  } else if (kind === "shared") {
-    const { shared } = await api("/api/shared").catch(() => ({ shared: [] }));
-    items = shared.map(s => ({ kind: "shared", id: s.id, note: s }));
   } else {
     const { notes } = await api("/api/notes").catch(() => ({ notes: [] }));
     items = notes.map(n => ({ kind: "note", id: n.id, note: n }));
@@ -345,7 +334,6 @@ async function viewList(kind) {
     if (!list.length) {
       const empty = query ? "Nothing matches “" + esc(q.trim()) + "”."
         : kind === "letters" ? "No letters yet.<br>The first one arrives Monday."
-        : kind === "shared" ? "Nothing shared with you yet.<br>Shared notes arrive by email."
         : "Nothing here yet.";
       return `<div class="empty-state">${empty}</div>`;
     }
@@ -361,57 +349,30 @@ async function viewList(kind) {
           <div class="nr-title">${isThis ? "This week" : "Week of " + esc(weekRangeLabel(it.weekKey).split(" – ")[0])}</div>
           <div class="nr-sub">${esc(weekRangeLabel(it.weekKey))}</div></div>`;
       }
-      if (it.kind === "shared") {
-        const s = it.note;
-        return `<div class="nrow" data-shared="${s.id}">
-          <div class="nr-title">✉ ${esc(s.title)}</div>
-          <div class="nr-sub">${esc(s.from_name || s.from_email)} · ${relTime(s.received_at)}</div></div>`;
-      }
       const n = it.note;
       return `<div class="nrow" data-note="${n.id}">
-        <div class="nr-title">${n.shared ? "✉ " : ""}${esc(n.title)}</div>
+        <div class="nr-title">${esc(n.title)}</div>
         <div class="nr-sub">${relTime(n.updatedAt)} · ${STATUS_LABEL[n.status] || n.status} — ${esc(plainExcerpt(n.body))}</div></div>`;
     }).join("");
   };
   app.innerHTML = `
     <button class="back" data-go="#/folders">‹ ${meta.back}</button>
     <h1 class="large-title">${esc(meta.title)}</h1>
-    <p class="list-count">${items.length} ${items.length === 1 ? (kind === "letters" ? "letter" : kind === "shared" ? "note" : "note") : (kind === "letters" ? "letters" : "notes")}</p>
+    <p class="list-count">${items.length} ${items.length === 1 ? (kind === "letters" ? "letter" : "note") : (kind === "letters" ? "letters" : "notes")}</p>
     <div class="search"><span class="s-ic">⌕</span><input id="q" placeholder="Search" autocomplete="off"></div>
     <div class="ngroup" id="rows">${renderRows("")}</div>
-    ${meta.compose ? `<button class="fab" id="compose" aria-label="New note">✎</button>` : ""}
-    ${kind === "shared" ? `<p class="foot-note">Checked every 10 minutes — <button class="go" id="scan-now">check now</button></p>` : ""}`;
+    ${meta.compose ? `<button class="fab" id="compose" aria-label="New note">✎</button>` : ""}`;
   app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
   const q = $("#q");
   q.addEventListener("input", () => { $("#rows").innerHTML = renderRows(q.value); bindRows(); });
   const bindRows = () => {
     app.querySelectorAll("[data-note]").forEach(r => r.onclick = () => location.hash = "#/note/" + r.dataset.note);
-    app.querySelectorAll("[data-shared]").forEach(r => r.onclick = () => location.hash = "#/shared/" + r.dataset.shared);
     app.querySelectorAll("[data-letter]").forEach(r => r.onclick = () => location.hash = "#/letter/" + r.dataset.letter);
     app.querySelectorAll("[data-today]").forEach(r => r.onclick = () => location.hash = "#/letter/today");
   };
   bindRows();
   const fab = $("#compose");
   if (fab) fab.onclick = () => location.hash = "#/compose";
-  const scan = $("#scan-now");
-  if (scan) scan.onclick = async () => {
-    scan.disabled = true;
-    try {
-      await api("/api/imap/scan", { method: "POST" });
-      for (let i = 0; i < 150; i++) {
-        await new Promise(r => setTimeout(r, 2000));
-        const cur = await api("/api/imap").catch(() => null);
-        if (!cur || !cur.syncRunning) {
-          const lr = cur && cur.lastScan;
-          const n = lr && typeof lr.imported === "number" ? lr.imported : 0;
-          toast(n ? n + " new shared note" + (n === 1 ? "" : "s") + "." : "Nothing new.");
-          if (n) viewList("shared");
-          break;
-        }
-      }
-    } catch (e) { toast(e.message); }
-    scan.disabled = false;
-  };
 }
 
 /* ---------- topic folder ---------- */
@@ -495,7 +456,6 @@ const ZEN = {
   motion: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M4 9.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/><path d="M4 14.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/><path d="M4 19.5c2.5-1.8 5 1.8 7.5 0s5 1.8 7.5 0"/></svg>',
   decided: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M21.3 13a8.3 8.3 0 1 1-2.5-5.9"/></svg>',
   resting: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M19.8 14.8A7.8 7.8 0 1 1 11.2 5.4a6.2 6.2 0 0 0 8.6 9.4z"/></svg>',
-  share: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M12 3v10m0-10L7.5 7.5M12 3l4.5 4.5"/><path d="M4.5 12v7a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/></svg>',
   edit: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M5 19.5l1.2-4.2L16.7 4.8a2 2 0 0 1 2.8 2.8L9 18.1z"/><path d="M14.8 6.7l2.8 2.8"/></svg>',
   export: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M13 4.5V15"/><path d="M8.8 11.2L13 15.4l4.2-4.2"/><path d="M5.5 19.5h15"/></svg>',
   del: '<svg class="zen" viewBox="0 0 26 26" ' + ZEN_STROKE + '><path d="M5 7h16"/><path d="M9.5 7V5h7v2"/><path d="M7 7l1 13.5h8L17 7"/><path d="M10.8 10.5v7M15.2 10.5v7"/></svg>',
@@ -504,7 +464,6 @@ function orbHtml(note) {
   const items = [];
   STATUS_FLOW.forEach(s => items.push({ kind: "status", key: s, label: STATUS_LABEL[s], active: note.status === s }));
   items.push({ kind: "status", key: "resting", label: note.status === "resting" ? "Wake up" : "Rest", active: note.status === "resting" });
-  items.push({ kind: "share", key: "share", label: "Share by email", active: false });
   items.push({ kind: "act", key: "edit", label: "Edit" });
   items.push({ kind: "act", key: "export", label: "Export" });
   items.push({ kind: "act", key: "del", label: "Delete" });
@@ -589,39 +548,7 @@ async function downloadNote(id) {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch (e) { toast(e.message); }
 }
-/* Share sheet: email addresses, comma-separated. The email is the invite. */
-function shareSheetHtml() {
-  return `<div class="sheet-back" id="sheet-back"><div class="sheet" role="dialog" aria-label="Share by email">
-    <h3>Share by email</h3>
-    <p class="sub">They get the note as an email. If they use Abba, it lands in their <em>Shared with me</em> shelf — that's the whole invite.</p>
-    <input id="share-emails" placeholder="name@example.com, …" autocomplete="off" style="width:100%">
-    <div class="btn-row" style="margin-top:12px">
-      <button class="btn btn-ghost" id="share-cancel">Cancel</button>
-      <button class="btn btn-primary" id="share-send">Send</button>
-    </div></div></div>`;
-}
-function openShareSheet(noteId) {
-  const wrap = document.createElement("div");
-  wrap.innerHTML = shareSheetHtml();
-  document.body.appendChild(wrap);
-  const close = () => wrap.remove();
-  $("#share-cancel", wrap).onclick = close;
-  $("#sheet-back", wrap).addEventListener("click", (e) => { if (e.target.id === "sheet-back") close(); });
-  const input = $("#share-emails", wrap);
-  input.focus();
-  $("#share-send", wrap).onclick = async () => {
-    const emails = input.value.split(/[,\s;]+/).map(s => s.trim()).filter(Boolean);
-    if (!emails.length) { toast("Add at least one email address."); return; }
-    const btn = $("#share-send", wrap);
-    btn.disabled = true;
-    try {
-      const r = await api("/api/notes/" + noteId + "/share", { method: "POST", body: JSON.stringify({ emails }) });
-      close();
-      toast(r.sent === 1 ? "Shared." : "Shared with " + r.sent + " people.");
-      viewDetail(noteId, false);
-    } catch (e) { toast(e.message); btn.disabled = false; }
-  };
-}
+/* note editor */
 function editorHtml(note) {
   return '<div class="editbar"><button class="back" id="e-cancel">‹ Cancel</button>' +
     '<button class="done-btn" id="e-save">Done</button></div>' +
@@ -641,8 +568,7 @@ function detailBodyHtml(note, related) {
     : "";
   return '<button class="back" data-go="#/list/notes">‹ Notepad</button>' +
     '<h1 class="note-title">' + esc(note.title) + "</h1>" +
-    '<p class="note-meta">' + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min" +
-    (note.shared ? ' · <span title="Shared by email">✉ shared</span>' : "") + "</p>" +
+    '<p class="note-meta">' + relTime(note.updatedAt) + " · ◷ " + note.readMins + " min</p>" +
     tags + '<div class="reader">' + md(note.body) + "</div>" +
     orbHtml(note) + relatedHtml(related) +
     '<div id="convo-wrap">' + commentsHtml(note, convoOpen()) + "</div>";
@@ -740,9 +666,6 @@ async function viewDetail(id, editing) {
         if (kind === "status") {
           await api("/api/notes/" + id, { method: "PATCH", body: JSON.stringify({ status: key }) });
           toast(key === "decided" ? "Marked decided. Nice." : "Updated.");
-        } else if (kind === "share") {
-          openShareSheet(id);
-          return;
         } else if (kind === "act") {
           if (key === "edit") { viewDetail(id, true); return; }
           if (key === "export") { downloadNote(id); return; }
@@ -759,37 +682,6 @@ async function viewDetail(id, editing) {
     });
   }
   bindConvo(note, id);
-  renderMermaid();
-}
-
-/* ---------- shared note (incoming) ---------- */
-async function viewSharedNote(id) {
-  renderTabs("shared");
-  let s;
-  try { s = (await api("/api/shared/" + id)).note; }
-  catch (e) {
-    app.innerHTML = '<button class="back" data-go="#/list/shared">‹ Shared with me</button><div class="empty-state">That note isn\'t here anymore.</div>';
-    app.querySelector("[data-go]").onclick = (ev) => location.hash = ev.target.closest("[data-go]").dataset.go;
-    return;
-  }
-  app.innerHTML = `
-    <button class="back" data-go="#/list/shared">‹ Shared with me</button>
-    <h1 class="note-title">${esc(s.title)}</h1>
-    <p class="note-meta">from ${esc(s.from_name ? s.from_name + " <" + s.from_email + ">" : s.from_email)} · ${relTime(s.received_at)}</p>
-    <div class="reader">${md(s.body)}</div>
-    <div class="btn-row" style="margin-top:18px">
-      <button class="btn btn-ghost" id="sh-remove">Remove from shelf</button>
-    </div>
-    <p class="foot-note">Shared notes are read-only snapshots — the original lives with its author.</p>`;
-  app.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
-  $("#sh-remove").onclick = async () => {
-    if (!confirm("Remove this shared note from your shelf?")) return;
-    try {
-      await api("/api/shared/" + id, { method: "DELETE" });
-      toast("Removed.");
-      location.hash = "#/list/shared";
-    } catch (e) { toast(e.message); }
-  };
   renderMermaid();
 }
 
@@ -822,102 +714,10 @@ async function viewLetter(weekKeyParam) {
 }
 
 /* ---------- settings ---------- */
-async function renderMailCard() {
-  const card = $("#mail-card");
-  if (!card) return;
-  let st;
-  try { st = await api("/api/imap"); }
-  catch (e) { card.innerHTML = `<p class="sub">Couldn't check mail status: ${esc(e.message)}</p>`; return; }
-  const syncLine = st.configured
-    ? `<p class="sub" style="margin:0 0 10px">${st.lastSyncAt ? "Notes synced " + esc(relTime(st.lastSyncAt)) + "." : "Not synced yet."}` +
-      (st.lastError ? ` <span style="color:var(--danger)">Last error: ${esc(st.lastError)}</span>` : "") +
-      (st.lastShareScanAt ? `<br>Shared inbox checked ${esc(relTime(st.lastShareScanAt))}.` : "") + `</p>`
-    : `<p class="sub" style="margin:0 0 10px">One account does two jobs: it mirrors your notepad into a <span class="mono">Notes</span> folder on your mail server, and it sends the emails when you share a note. Passwords never leave this Abba.</p>`;
-  card.innerHTML = `
-    ${st.configured ? `<p class="sub" style="margin:0 0 10px"><span class="mono">${esc(st.username)}@${esc(st.host)}</span> → <span class="mono">${esc(st.folder)}</span></p>` : ""}
-    ${syncLine}
-    <div class="btn-row">
-      <input id="imap-host" placeholder="mail.example.com" style="flex:2;min-width:0" autocomplete="off" value="${esc(st.host || "")}">
-      <input id="imap-port" placeholder="993" inputmode="numeric" style="flex:1;min-width:0;max-width:76px" value="${esc(st.port || "993")}">
-    </div>
-    <div class="btn-row" style="margin-top:8px">
-      <input id="imap-user" placeholder="username" style="flex:1;min-width:0" autocomplete="username" value="${esc(st.username || "")}">
-      <input id="imap-pass" type="password" placeholder="${st.configured ? "password (leave blank to keep)" : "password"}" style="flex:1;min-width:0" autocomplete="new-password">
-    </div>
-    <div class="btn-row" style="margin-top:8px">
-      <input id="imap-folder" placeholder="Notes" style="flex:1;min-width:0" autocomplete="off" value="${esc(st.folder || "Notes")}">
-      <button class="btn btn-primary" id="imap-save">${st.configured ? "Save" : "Connect"}</button>
-    </div>
-    <p class="sub" style="margin:10px 0 6px">Sending (SMTP) — usually the same account. Leave blank to guess from the IMAP host.</p>
-    <div class="btn-row">
-      <input id="smtp-host" placeholder="smtp.example.com" style="flex:2;min-width:0" autocomplete="off" value="${esc(st.smtpHost || "")}">
-      <input id="smtp-port" placeholder="587" inputmode="numeric" style="flex:1;min-width:0;max-width:76px" value="${esc(st.smtpPort || "587")}">
-    </div>
-    ${st.configured ? `
-    <div class="btn-row" style="margin-top:8px">
-      <button class="btn btn-ghost" id="imap-sync">Sync now</button>
-      <button class="btn btn-quiet" id="imap-drop" style="color:var(--danger)">Disconnect</button>
-    </div>
-    <p class="sub" style="margin:10px 0 0">Abba is the source of truth: deleting a note deletes its message, and a message deleted in your mail app syncs back down. Edits win by newest timestamp.</p>` : ""}`;
-  $("#imap-save").onclick = async () => {
-    const payload = {
-      host: $("#imap-host").value.trim(),
-      port: Number($("#imap-port").value.trim()) || 993,
-      username: $("#imap-user").value.trim(),
-      password: $("#imap-pass").value,
-      folder: $("#imap-folder").value.trim() || "Notes",
-      smtpHost: $("#smtp-host").value.trim(),
-      smtpPort: Number($("#smtp-port").value.trim()) || 587,
-    };
-    if (!payload.host || !payload.username || (!payload.password && !st.configured)) { toast("Host, username, and password are required."); return; }
-    try {
-      const d = await api("/api/imap", { method: "PUT", body: JSON.stringify(payload) });
-      toast(d.smtpWarning || (st.configured ? "Saved." : "Connected — first sync is on its way."));
-      renderMailCard();
-    } catch (e) { toast(e.message); }
-  };
-  const sy = $("#imap-sync");
-  if (sy) sy.onclick = async () => {
-    sy.disabled = true;
-    try {
-      const kick = await api("/api/imap/sync", { method: "POST" });
-      if (!kick.started) { toast("A sync is already running — watching it finish."); }
-      else toast("Sync started in the background…");
-      // The sync runs server-side (Gmail round-trips can outlast proxy
-      // timeouts); poll the account until it lands.
-      let landed = false;
-      for (let i = 0; i < 150; i++) {
-        await new Promise(r => setTimeout(r, 2000));
-        const cur = await api("/api/imap").catch(() => null);
-        if (!cur || !cur.syncRunning) {
-          landed = true;
-          const lr = cur && cur.lastSync;
-          if (lr) toast(lr.errors && lr.errors.length ? "Sync had trouble: " + lr.errors[0]
-            : `Synced — ${lr.pushed} up, ${lr.pulled} down, ${lr.deleted} removed.`);
-          else if (cur && cur.lastError) toast("Sync had trouble: " + cur.lastError);
-          else if (cur) toast("Sync didn't report back — try again.");
-          break;
-        }
-      }
-      if (!landed) toast("Sync is taking a while — check Settings in a bit.");
-    } catch (e) { toast(e.message); }
-    sy.disabled = false;
-    renderMailCard();
-  };
-  const dr = $("#imap-drop");
-  if (dr) dr.onclick = async () => {
-    if (!confirm("Disconnect mail? Your notes stay in Abba; nothing is deleted from your mail.")) return;
-    try { await api("/api/imap", { method: "DELETE" }); toast("Disconnected."); renderMailCard(); }
-    catch (e) { toast(e.message); }
-  };
-}
-
 async function viewSettings() {
   renderTabs("settings");
   app.innerHTML = `
     <h1 class="large-title">Settings</h1>
-    <p class="section-label">Mail</p>
-    <div class="card" id="mail-card"><p class="sub">Checking…</p></div>
     <p class="section-label">Backup</p>
     <div class="card">
       <p class="sub" style="margin:0 0 10px">Your notes as one JSON file — keep it somewhere safe.</p>
@@ -934,7 +734,6 @@ async function viewSettings() {
       </div>
     </div>
     <p class="foot-note">S · E · F · U — soulfulness, effectiveness, flow, unity.</p>`;
-  renderMailCard();
   $("#bk-export").onclick = async () => {
     try {
       const res = await fetch("/api/backup");
@@ -980,7 +779,6 @@ function route() {
   const h = location.hash || "#/folders";
   window.scrollTo(0, 0);
   if (h.startsWith("#/note/")) { const ed = h.includes("?edit"); viewDetail(h.split("/")[2].split("?")[0], ed); }
-  else if (h.startsWith("#/shared/")) viewSharedNote(h.split("/")[2]);
   else if (h.startsWith("#/list/")) {
     const parts = h.split("/");
     if (parts[2] === "topic") viewTopic(decodeURIComponent(parts.slice(3).join("/")));

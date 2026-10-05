@@ -1,6 +1,7 @@
 // api.test.ts — end-to-end over real HTTP against a spawned server
 // with a fresh data dir. Covers the single-user notepad API: notes CRUD,
-// comments, letters, nudges, mail config, and backup. No auth anywhere.
+// comments, letters, nudges, the read-only sync feed, and backup.
+// No auth anywhere. No communications.
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -142,98 +143,33 @@ describe("letters and nudges", () => {
   });
 });
 
-describe("share without mail", () => {
-  test("share requires a connected mail account", async () => {
-    const { status, data } = await post(`/api/notes/${noteId}/share`, { emails: ["a@example.com"] });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/mail/i);
-  });
-  test("bad emails rejected", async () => {
-    const { status } = await post(`/api/notes/${noteId}/share`, { emails: ["not-an-email"] });
-    expect(status).toBe(400);
-  });
-  test("share history starts empty", async () => {
-    const { data } = await api("/api/shares");
-    expect(data.shares).toEqual([]);
-  });
-  test("shared inbox starts empty", async () => {
-    const { data } = await api("/api/shared");
-    expect(data.shared).toEqual([]);
-  });
-});
-
-describe("imap config", () => {
-  test("unconfigured at first", async () => {
-    const { data } = await api("/api/imap");
-    expect(data.configured).toBe(false);
-  });
-  test("missing fields refused", async () => {
-    const { status } = await post("/api/imap", { host: "x" });
-    expect(status).toBe(400);
-  });
-  test("unreachable host -> 502, nothing saved", async () => {
-    const { status } = await post("/api/imap", {
-      host: "127.0.0.1", port: 1, username: "u", password: "p", folder: "Notes",
-    });
-    expect(status).toBe(502);
-    const { data } = await api("/api/imap");
-    expect(data.configured).toBe(false);
-  });
-  test("delete when unconfigured is fine", async () => {
-    const { status } = await api("/api/imap", { method: "DELETE" });
+describe("sync feed (read-only, for Switchboard)", () => {
+  test("returns changed notes with lifecycle state", async () => {
+    const { status, data } = await api("/api/sync/notes?since=0");
     expect(status).toBe(200);
+    expect(Array.isArray(data.notes)).toBe(true);
+    expect(data.notes.length).toBeGreaterThan(0);
+    const n = data.notes[0];
+    expect(typeof n.id).toBe("number");
+    expect(typeof n.title).toBe("string");
+    expect(n.folder).toBe("Notepad");
+    expect(typeof n.updated_at).toBe("string");
+    expect(["seed", "sprout", "motion", "decided", "resting"]).toContain(n.state);
   });
-  test("sync kick returns instantly with a backward-compatible shape", async () => {
-    const t0 = Date.now();
-    const { status, data } = await post("/api/imap/sync", {});
-    expect(status).toBe(200);
-    expect(Date.now() - t0).toBeLessThan(5000);
-    expect(data.ok).toBe(true);
-    // stale cached clients do r.errors.length — this must never throw
-    expect(Array.isArray(data.errors)).toBe(true);
-    expect(typeof data.pushed).toBe("number");
+  test("since filters to recent changes", async () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const { data } = await api(`/api/sync/notes?since=${future}`);
+    expect(data.notes).toEqual([]);
   });
-  test("scan kick returns instantly with a backward-compatible shape", async () => {
-    const { status, data } = await post("/api/imap/scan", {});
-    expect(status).toBe(200);
-    expect(data.ok).toBe(true);
-    expect(typeof data.imported).toBe("number");
+  test("no since means everything", async () => {
+    const { data } = await api("/api/sync/notes");
+    expect(data.notes.length).toBeGreaterThan(0);
   });
   test("service worker cache name is version-stamped", async () => {
     const res = await fetch(BASE + "/sw.js");
     const text = await res.text();
     expect(text.includes("__V__")).toBe(false);
     expect(/abba-shell-\d+/.test(text)).toBe(true);
-  });
-});
-
-describe("imap background failures are never silent", () => {
-  test("a sync that cannot reach the server surfaces errors, not silence", async () => {
-    // bypass PUT validation (it test-connects): write an unreachable
-    // account straight into sqlite, like a config whose server went away
-    const { Database } = await import("bun:sqlite");
-    const db = new Database(join(testDir, "abba.db"));
-    db.query(`INSERT OR REPLACE INTO imap_account
-      (id, host, port, username, password, folder, smtp_host, smtp_port, last_sync_at, last_error, last_share_scan_at, updated_at)
-      VALUES (1, '127.0.0.1', 1, 'u', 'p', 'Notes', '', 587, '', '', '', ?)`)
-      .run(new Date().toISOString());
-    db.close();
-    const kick = await post("/api/imap/sync", {});
-    expect(kick.data.started).toBe(true);
-    let cur: any = null;
-    for (let i = 0; i < 40; i++) {
-      await new Promise((r) => setTimeout(r, 250));
-      cur = (await api("/api/imap")).data;
-      if (!cur.syncRunning) break;
-    }
-    expect(cur.syncRunning).toBe(false);
-    // the failure must be visible: result errors + the red last-error line
-    expect(cur.lastSync.errors.length).toBeGreaterThan(0);
-    expect(cur.lastError).toBeTruthy();
-    expect(cur.lastSyncAt).toBeFalsy(); // still never synced
-    // and the worker must be free for the next attempt
-    const kick2 = await post("/api/imap/sync", {});
-    expect(kick2.data.started).toBe(true);
   });
 });
 

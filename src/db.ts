@@ -2,9 +2,7 @@
 //
 // Abba is a single-user notepad. There is no sign-in: the server binds to
 // 127.0.0.1 and access control lives one layer up (Deck's TOTP gate).
-// There is no peer-to-peer mesh. Sharing happens through IMAP: a note can
-// be emailed to anyone (X-Abba-Share headers), and incoming shared notes
-// are picked up from INBOX into the "shared with me" shelf.
+// Abba handles no communications — no email, no IMAP, no SMTP, no sharing.
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +27,16 @@ export function __setDbForTests(d: Database): void {
   migrate(db);
 }
 
+// Tiny key/value store for internal watermarks (e.g. mail-ingest cursor).
+export function kvGet(key: string): string | null {
+  const row = getDb().query(`SELECT value FROM kv WHERE key = ?`).get(key) as any;
+  return row ? String(row.value) : null;
+}
+export function kvSet(key: string, value: string): void {
+  getDb().query(`INSERT INTO kv (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, value);
+}
+
 export function getDb(): Database {
   if (!db) throw new Error("database not initialized");
   return db;
@@ -47,6 +55,15 @@ function migrate(d: Database): void {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at);
+    CREATE TABLE IF NOT EXISTS ingested_mail (
+      message_id TEXT PRIMARY KEY,
+      note_id INTEGER NOT NULL,
+      ingested_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS kv (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS comments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
@@ -73,38 +90,13 @@ function migrate(d: Database): void {
       nudge_key TEXT PRIMARY KEY,
       created_at TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS imap_account (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      host TEXT NOT NULL,
-      port INTEGER NOT NULL DEFAULT 993,
-      username TEXT NOT NULL,
-      password TEXT NOT NULL,
-      folder TEXT NOT NULL DEFAULT 'Notes',
-      smtp_host TEXT NOT NULL DEFAULT '',
-      smtp_port INTEGER NOT NULL DEFAULT 587,
-      last_sync_at TEXT NOT NULL DEFAULT '',
-      last_error TEXT NOT NULL DEFAULT '',
-      last_share_scan_at TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS shares (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-      recipient TEXT NOT NULL,
-      message_id TEXT NOT NULL DEFAULT '',
-      shared_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_shares_note ON shares(note_id);
-    CREATE TABLE IF NOT EXISTS shared_notes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      abba_id TEXT NOT NULL UNIQUE,
-      title TEXT NOT NULL DEFAULT '',
-      body TEXT NOT NULL DEFAULT '',
-      from_name TEXT NOT NULL DEFAULT '',
-      from_email TEXT NOT NULL DEFAULT '',
-      received_at TEXT NOT NULL
-    );
   `);
+  // 2026-10-05: communications removed. Drop any leftover comms tables from
+  // earlier versions (imap_account, shares, shared_notes) — their data is
+  // not carried forward.
+  d.exec(`DROP TABLE IF EXISTS imap_account`);
+  d.exec(`DROP TABLE IF EXISTS shares`);
+  d.exec(`DROP TABLE IF EXISTS shared_notes`);
   migrateSolo(d);
 }
 
@@ -205,25 +197,12 @@ function migrateSolo(d: Database): void {
     `);
   }
 
-  // imap_accounts (per-member) -> imap_account (single row, id = 1)
-  if (tables.includes("imap_accounts")) {
-    const has = (d.query(`SELECT COUNT(*) AS n FROM imap_account`).get() as any).n;
-    if (!has) {
-      const row = d.query(`
-        SELECT host, port, username, password, folder, last_sync_at, last_error
-        FROM imap_accounts ORDER BY member_id LIMIT 1
-      `).get() as any;
-      if (row) {
-        d.query(`INSERT INTO imap_account
-          (id, host, port, username, password, folder, smtp_host, smtp_port, last_sync_at, last_error, updated_at)
-          VALUES (1, ?, ?, ?, ?, ?, '', 587, ?, ?, ?)`)
-          .run(row.host, row.port, row.username, row.password, row.folder, row.last_sync_at, row.last_error, nowIso());
-      }
-    }
-  }
+  // imap_accounts (per-member, mesh era): communications are gone — drop it.
+  // (Previously this carried the account forward into imap_account; that
+  // table is dropped by migrate() now.)
 
   // drop everything from the circle/mesh era
-  for (const t of ["reactions", "circle", "members", "invited_users", "circle_peers", "mesh_seen", "mesh_blocked_nodes", "imap_accounts"]) {
+  for (const t of ["reactions", "circle", "members", "invited_users", "circle_peers", "mesh_seen", "mesh_blocked_nodes", "imap_accounts", "imap_account", "shares", "shared_notes"]) {
     d.exec(`DROP TABLE IF EXISTS ${t}`);
   }
   d.exec(`DROP INDEX IF EXISTS idx_members_user_id`);
@@ -239,11 +218,4 @@ export function randomToken(prefix = ""): string {
   const bytes = new Uint8Array(18);
   crypto.getRandomValues(bytes);
   return prefix + Buffer.from(bytes).toString("base64url");
-}
-
-/** Stable id for a shared note (X-Abba-Id). */
-export function randomShareId(): string {
-  const bytes = new Uint8Array(12);
-  crypto.getRandomValues(bytes);
-  return "sh-" + Buffer.from(bytes).toString("base64url");
 }

@@ -2,81 +2,17 @@
 // Bun + zero dependencies + SQLite. Port 3013.
 //
 // There is no sign-in: the server binds to 127.0.0.1 and access control
-// lives one layer up (Deck's TOTP gate). There is no peer-to-peer mesh.
-// Sharing is email through IMAP: notes go out with X-Abba-Share headers,
-// incoming shares are picked up from INBOX into the "shared with me" shelf.
+// lives one layer up (Deck's TOTP gate). Abba handles no communications —
+// no email, no IMAP, no SMTP, no polling. The only network interface beyond
+// the UI is the read-only GET /api/sync/notes feed for Switchboard.
 import { Database } from "bun:sqlite";
-import { initDataDir, getDb, nowIso, __setDbForTests } from "./db";
+import { initDataDir, getDb, nowIso, kvGet, kvSet, __setDbForTests } from "./db";
 import { autoTitle, readMins, relatedIdeas, composeDigest, composeDailyLetter, getDigest, listDigests, nudgesFor, dismissNudge, type NoteRow } from "./mind";
-import { syncImapAccount, testImap } from "./imapnotes";
-import { shareNote, scanSharedInbox, getImapAccount, smtpHostFor, SmtpError } from "./share";
-import { testSmtp } from "./smtp";
 
 const PORT = Number(process.env.ABBA_PORT || 3013);
 const STATUSES = ["seed", "sprout", "motion", "decided", "resting"] as const;
 
 initDataDir();
-
-// ---- IMAP sync ---------------------------------------------------------------
-// queueImapSync() debounces a sync ~20s after edits; a 10-minute interval
-// catches changes made from mail clients and picks up incoming shares.
-//
-// IMPORTANT: IMAP work never holds an HTTP request open. A full Gmail
-// round-trip is dozens of sequential APPEND/FETCH commands and can run
-// longer than proxy timeouts (Cloudflare ~100s) — the browser then reports
-// "Load failed" even though the sync is fine. runImapWork() runs everything
-// in the background; the client polls GET /api/imap for completion.
-let imapTimer: any = null;
-let imapWork: { kind: "sync" | "scan"; startedAt: string } | null = null;
-let lastSyncResult: { pushed: number; pulled: number; deleted: number; errors: string[] } | null = null;
-let lastScanResult: { imported: number } | null = null;
-
-function runImapWork(kind: "sync" | "scan", fn: () => Promise<any>): boolean {
-  if (imapWork) return false; // one at a time — the other trigger retries later
-  imapWork = { kind, startedAt: nowIso() };
-  fn().then(
-    (r) => {
-      if (kind === "sync") lastSyncResult = r as any;
-      else lastScanResult = r as any;
-      imapWork = null;
-    },
-    (e) => noteImapFailure(kind, e),
-  );
-  return true;
-}
-/**
- * A background IMAP job died before it could report back (thrown outside the
- * job's own error handling). Previously this only reached the server console,
- * so the client polled, saw nothing, and went silent while Settings kept
- * saying "Not synced yet". Record it where the user can see it instead.
- * Exported for tests.
- */
-export function noteImapFailure(kind: "sync" | "scan", e: any): void {
-  const msg = String((e && (e as any).message) || e).slice(0, 200);
-  console.error(`[imap] background ${kind} failed:`, msg);
-  try { getDb().query("UPDATE imap_account SET last_error = ? WHERE id = 1").run(msg); } catch { /* db gone */ }
-  if (kind === "sync") lastSyncResult = { pushed: 0, pulled: 0, deleted: 0, errors: [msg] };
-  else lastScanResult = { imported: 0, error: msg } as any;
-  imapWork = null;
-}
-function queueImapSync() {
-  try {
-    if (!getImapAccount()) return;
-    if (imapTimer) clearTimeout(imapTimer);
-    imapTimer = setTimeout(() => {
-      imapTimer = null;
-      runImapWork("sync", () => syncImapAccount());
-      runImapWork("scan", () => scanSharedInbox());
-    }, 20000);
-  } catch { /* db not ready */ }
-}
-setInterval(() => {
-  try {
-    if (!getImapAccount()) return;
-    runImapWork("sync", () => syncImapAccount());
-    runImapWork("scan", () => scanSharedInbox());
-  } catch { /* db not ready */ }
-}, 10 * 60 * 1000);
 
 // ---- helpers -----------------------------------------------------------------
 function assetVersion(): number {
@@ -99,10 +35,9 @@ function noteJson(n: NoteRow): any {
   const db = getDb();
   const tags = JSON.parse(n.tags || "[]");
   const comments = db.query(`SELECT * FROM comments WHERE note_id = ? ORDER BY created_at ASC`).all(n.id) as any[];
-  const shareCount = (db.query(`SELECT COUNT(*) AS n FROM shares WHERE note_id = ?`).get(n.id) as any)?.n || 0;
   return {
     id: n.id, title: n.title, body: n.body, tags, status: n.status,
-    readMins: n.read_mins, shared: shareCount > 0,
+    readMins: n.read_mins,
     createdAt: n.created_at, updatedAt: n.updated_at,
     comments: comments.map((c) => ({ id: c.id, body: c.body, createdAt: c.created_at, author: c.author_name || "" })),
   };
@@ -110,16 +45,6 @@ function noteJson(n: NoteRow): any {
 function logEvent(kind: string, noteId: number | null, meta: any = {}): void {
   getDb().query("INSERT INTO events (kind, note_id, meta, created_at) VALUES (?, ?, ?, ?)")
     .run(kind, noteId, JSON.stringify(meta), nowIso());
-}
-function imapJson(a: any): any {
-  if (!a) return { configured: false };
-  return {
-    configured: true, host: a.host, port: a.port, username: a.username,
-    folder: a.folder, smtpHost: a.smtp_host || "", smtpPort: a.smtp_port || 587,
-    lastSyncAt: a.last_sync_at, lastError: a.last_error, lastShareScanAt: a.last_share_scan_at,
-    syncRunning: !!imapWork, syncKind: imapWork ? imapWork.kind : null,
-    lastSync: lastSyncResult, lastScan: lastScanResult,
-  };
 }
 
 // ---- app -----------------------------------------------------------------------
@@ -158,8 +83,7 @@ async function handle(req: Request): Promise<Response> {
   // ---- status ----
   if (req.method === "GET" && path === "/api/status") {
     const notes = (db.query("SELECT COUNT(*) AS n FROM notes").get() as any).n;
-    const sharedIn = (db.query("SELECT COUNT(*) AS n FROM shared_notes").get() as any).n;
-    return json({ ok: true, notes, sharedInbox: sharedIn, mail: !!getImapAccount() });
+    return json({ ok: true, notes });
   }
 
   // ---- notes ----
@@ -177,7 +101,6 @@ async function handle(req: Request): Promise<Response> {
     const res = db.query(`INSERT INTO notes (title, body, tags, status, read_mins, created_at, updated_at)
       VALUES (?, ?, ?, 'seed', ?, ?, ?)`).run(title, noteBody, JSON.stringify(tags), readMins(noteBody), t, t);
     const note = db.query(`SELECT * FROM notes WHERE id = ?`).get(Number(res.lastInsertRowid)) as NoteRow;
-    queueImapSync();
     return json({ note: noteJson(note) }, 201);
   }
 
@@ -217,28 +140,12 @@ async function handle(req: Request): Promise<Response> {
       updates.push("updated_at = ?"); vals.push(nowIso()); vals.push(noteId);
       db.query(`UPDATE notes SET ${updates.join(", ")} WHERE id = ?`).run(...vals);
       const fresh = db.query(`SELECT * FROM notes WHERE id = ?`).get(noteId) as NoteRow;
-      queueImapSync();
       return json({ note: noteJson(fresh) });
     }
 
     if (req.method === "DELETE" && sub === "") {
       db.query("DELETE FROM notes WHERE id = ?").run(noteId);
-      queueImapSync();
       return json({ ok: true });
-    }
-
-    // share by email — the email is the invite; no codes, no mesh
-    if (req.method === "POST" && sub === "/share") {
-      const b = await body(req);
-      const emails = Array.isArray(b.emails) ? b.emails : [];
-      try {
-        const r = await shareNote(noteId, emails);
-        logEvent("shared", noteId, { recipients: emails.length });
-        return json({ sent: r.sent });
-      } catch (e: any) {
-        const status = e instanceof SmtpError ? (e.code >= 500 ? 502 : e.code) : 502;
-        return err("Couldn't send: " + String((e && e.message) || e).slice(0, 200), status);
-      }
     }
 
     if (req.method === "POST" && sub === "/comments") {
@@ -262,34 +169,6 @@ async function handle(req: Request): Promise<Response> {
     return err("Not found.", 404);
   }
 
-  // ---- share history ----
-  if (req.method === "GET" && path === "/api/shares") {
-    const rows = db.query(`
-      SELECT s.id, s.note_id, s.recipient, s.shared_at, n.title
-      FROM shares s LEFT JOIN notes n ON n.id = s.note_id
-      ORDER BY s.shared_at DESC LIMIT 100`).all();
-    return json({ shares: rows });
-  }
-
-  // ---- shared with me (incoming shares) ----
-  if (req.method === "GET" && path === "/api/shared") {
-    const rows = db.query(`SELECT * FROM shared_notes ORDER BY received_at DESC`).all();
-    return json({ shared: rows });
-  }
-  const sharedIdMatch = path.match(/^\/api\/shared\/(\d+)$/);
-  if (sharedIdMatch) {
-    const sid = Number(sharedIdMatch[1]);
-    if (req.method === "GET") {
-      const row = db.query(`SELECT * FROM shared_notes WHERE id = ?`).get(sid);
-      if (!row) return err("Not found.", 404);
-      return json({ note: row });
-    }
-    if (req.method === "DELETE") {
-      db.query(`DELETE FROM shared_notes WHERE id = ?`).run(sid);
-      return json({ ok: true });
-    }
-  }
-
   // ---- letters ----
   if (req.method === "GET" && path === "/api/digests") return json({ digests: listDigests() });
   if (req.method === "GET" && path === "/api/digest/today") return json({ digest: composeDailyLetter() });
@@ -305,57 +184,28 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true });
   }
 
-  // ---- mail: IMAP notes sync + SMTP sharing (one account; password never leaves the server) ----
-  if (path === "/api/imap" && req.method === "GET") {
-    return json(imapJson(getImapAccount()));
-  }
-  if (path === "/api/imap" && (req.method === "PUT" || req.method === "POST")) {
-    const b = await body(req);
-    const host = String(b.host || "").trim();
-    const username = String(b.username || "").trim();
-    const folder = String(b.folder || "Notes").trim().slice(0, 60) || "Notes";
-    const port = b.port && Number(b.port) > 0 ? Number(b.port) : 993;
-    const smtpHost = String(b.smtpHost || "").trim().slice(0, 120);
-    const smtpPort = b.smtpPort && Number(b.smtpPort) > 0 ? Number(b.smtpPort) : 587;
-    const existing = getImapAccount();
-    const password = typeof b.password === "string" && b.password ? b.password : (existing ? existing.password : "");
-    if (!host || !username || !password) return err("Host, username, and password are required.", 400);
-    try {
-      await testImap({ host, port, user: username, pass: password, folder });
-    } catch (e: any) {
-      return err("Couldn't reach that mailbox: " + String((e && e.message) || e).slice(0, 160), 502);
-    }
-    let smtpWarning = "";
-    try {
-      await testSmtp({ host: smtpHost || host.replace(/^imap\./i, "smtp."), port: smtpPort, user: username, pass: password });
-    } catch (e: any) {
-      smtpWarning = "Mail sync is on, but sending shares failed this check: " + String((e && e.message) || e).slice(0, 140);
-    }
-    const t = nowIso();
-    db.query(`INSERT INTO imap_account (id, host, port, username, password, folder, smtp_host, smtp_port, last_error, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?, ?, ?, '', ?)
-      ON CONFLICT(id) DO UPDATE SET host = excluded.host, port = excluded.port,
-        username = excluded.username, password = excluded.password, folder = excluded.folder,
-        smtp_host = excluded.smtp_host, smtp_port = excluded.smtp_port,
-        last_error = '', updated_at = excluded.updated_at`)
-      .run(host, port, username, password, folder, smtpHost, smtpPort, t);
-    queueImapSync();
-    return json({ ok: true, smtpWarning: smtpWarning || undefined });
-  }
-  if (path === "/api/imap" && req.method === "DELETE") {
-    db.query("DELETE FROM imap_account WHERE id = 1").run();
-    if (imapTimer) { clearTimeout(imapTimer); imapTimer = null; }
-    return json({ ok: true });
-  }
-  if (path === "/api/imap/sync" && req.method === "POST") {
-    const started = runImapWork("sync", () => syncImapAccount());
-    // errors/pushed/pulled/deleted keep the pre-background SyncResult shape
-    // so a stale cached client doing r.errors.length can't throw.
-    return json({ ok: true, running: true, started, errors: [], pushed: 0, pulled: 0, deleted: 0, ...(lastSyncResult || {}) });
-  }
-  if (path === "/api/imap/scan" && req.method === "POST") {
-    const started = runImapWork("scan", () => scanSharedInbox());
-    return json({ ok: true, running: true, started, imported: lastScanResult ? lastScanResult.imported : 0 });
+  // ---- sync feed (read-only, for Switchboard) ----
+  // GET /api/sync/notes?since=<unix-timestamp>
+  // Returns notes (ideas) changed since the timestamp: [{id, title, folder, updated_at, state}].
+  // updated_at is ISO 8601; compare with >= against `since`.
+  // This is the only network interface Abba exposes beyond its UI.
+  if (req.method === "GET" && path === "/api/sync/notes") {
+    const sinceRaw = url.searchParams.get("since");
+    let sinceMs = Number(sinceRaw || 0);
+    if (sinceMs > 0 && sinceMs < 1e12) sinceMs *= 1000; // accept unix seconds as well as ms
+    const since = sinceMs > 0 ? new Date(sinceMs).toISOString() : "1970-01-01T00:00:00.000Z";
+    const rows = db.query(
+      `SELECT id, title, status, updated_at FROM notes WHERE updated_at >= ? ORDER BY updated_at ASC LIMIT 500`
+    ).all(since) as any[];
+    return json({
+      notes: rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        folder: "Notepad",
+        updated_at: r.updated_at,
+        state: r.status,
+      })),
+    });
   }
 
   // ---- backup: plain JSON export / import ----
@@ -383,7 +233,6 @@ async function handle(req: Request): Promise<Response> {
           readMins(nbody), n.created_at || t, n.updated_at || t);
       imported++;
     }
-    queueImapSync();
     return json({ ok: true, imported });
   }
 
@@ -392,7 +241,107 @@ async function handle(req: Request): Promise<Response> {
 
 export function __resetForTests(d: Database): void { __setDbForTests(d); }
 
+// ---------------------------------------------------------------------------
+// Email-to-note ingest: Abba pulls emails Relay found in the Notes IMAP
+// folder via Relay's HTTP API. NO IMAP/SMTP here — Abba stays comms-free.
+// One-way ingest only: nothing is ever written back to the Notes folder.
+//
+// Relay contract: GET {RELAY_URL}/api/relay/notes-emails?since=<ms|sec>
+//   → { emails: [{ id, message_id, subject, body, from, date }] }
+//   date is unix seconds; body is markdown (Apple Notes convention).
+// ---------------------------------------------------------------------------
+const RELAY_BASE = (process.env.RELAY_URL || "http://127.0.0.1:3006").trim().replace(/\/+$/, "");
+const INGEST_INTERVAL_MS = 5 * 60 * 1000;
+const INGEST_WATERMARK_KEY = "notes_mail_watermark";
+
+export interface NotesEmail {
+  id?: unknown;
+  message_id?: unknown;
+  subject?: unknown;
+  body?: unknown;
+  from?: unknown;
+  date?: unknown;
+}
+
+/** Dedupe key: message_id, falling back to relay's id. Empty when unidentifiable. */
+export function notesEmailDedupeKey(e: NotesEmail): string {
+  const mid = String(e?.message_id ?? "").trim();
+  if (mid) return mid;
+  const rid = String(e?.id ?? "").trim();
+  return rid ? `relay:${rid}` : "";
+}
+
+function notesEmailDateMs(e: NotesEmail): number {
+  const d = e?.date;
+  if (typeof d === "number" && Number.isFinite(d) && d > 0) return d > 1e12 ? d : d * 1000;
+  if (typeof d === "string" && d.trim()) {
+    const p = Date.parse(d.trim());
+    if (!Number.isNaN(p) && p > 0) return p;
+  }
+  return Date.now();
+}
+
+/** Pure mapping: Relay Notes-folder email → Abba note fields. */
+export function notesEmailToNote(e: NotesEmail): {
+  title: string; body: string; tags: string; created_at: string; updated_at: string;
+} {
+  const body = String(e?.body ?? "");
+  const subject = String(e?.subject ?? "").trim();
+  const title = (subject || body.trim().slice(0, 60) || "Untitled note").slice(0, 200);
+  const iso = new Date(notesEmailDateMs(e)).toISOString();
+  return { title, body, tags: JSON.stringify(["from-email"]), created_at: iso, updated_at: iso };
+}
+
+/** One ingest pass. Quiet on Relay failure; never throws. */
+export async function ingestNotesEmails(): Promise<{ fetched: number; ingested: number }> {
+  const db = getDb();
+  let wm = Number(kvGet(INGEST_WATERMARK_KEY) || 0);
+  if (!wm) wm = Date.now() - 7 * 86400000; // first run: last 7 days only, no ancient history
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  let res: Response;
+  try {
+    res = await fetch(`${RELAY_BASE}/api/relay/notes-emails?since=${wm}`, { signal: ctrl.signal });
+  } catch {
+    console.log("[ingest] relay unreachable, skipping notes-email poll");
+    return { fetched: 0, ingested: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    console.log(`[ingest] relay HTTP ${res.status}, skipping notes-email poll`);
+    return { fetched: 0, ingested: 0 };
+  }
+  const j: any = await res.json().catch(() => null);
+  const emails: NotesEmail[] = Array.isArray(j?.emails) ? j.emails : [];
+  let ingested = 0;
+  let maxDate = wm;
+  for (const e of emails) {
+    const key = notesEmailDedupeKey(e);
+    if (!key) continue; // unidentifiable: skip rather than risk duplicates
+    if (db.query(`SELECT 1 FROM ingested_mail WHERE message_id = ?`).get(key)) continue;
+    const n = notesEmailToNote(e);
+    const r = db.query(`INSERT INTO notes (title, body, tags, status, read_mins, created_at, updated_at)
+      VALUES (?, ?, ?, 'seed', ?, ?, ?)`)
+      .run(n.title, n.body, n.tags, readMins(n.body), n.created_at, n.updated_at);
+    db.query(`INSERT INTO ingested_mail (message_id, note_id, ingested_at) VALUES (?, ?, ?)`)
+      .run(key, Number(r.lastInsertRowid), nowIso());
+    ingested++;
+    const ems = Date.parse(n.created_at);
+    if (ems > maxDate) maxDate = ems;
+  }
+  if (maxDate > wm) kvSet(INGEST_WATERMARK_KEY, String(maxDate));
+  if (ingested > 0) console.log(`[ingest] notes-email: ${ingested} new note(s) from ${emails.length} fetched`);
+  return { fetched: emails.length, ingested };
+}
+
+function startNotesEmailIngest(): void {
+  ingestNotesEmails().catch(() => {});
+  setInterval(() => { ingestNotesEmails().catch(() => {}); }, INGEST_INTERVAL_MS);
+}
+
 if (import.meta.main) {
   Bun.serve({ port: PORT, hostname: "127.0.0.1", fetch: handle });
   console.log(`Abba listening on http://127.0.0.1:${PORT}  (single-user; access via Deck)`);
+  startNotesEmailIngest();
 }
